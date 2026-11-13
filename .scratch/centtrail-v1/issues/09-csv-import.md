@@ -14,3 +14,7 @@
 - [x] Same date, amount and payee with a different time is shown as an uncertain match for the owner to decide
 - [x] A new payee proposes the row's category as its default category
 - [x] Importing the sample export twice yields 29 entries, not 58
+
+## Comments
+
+The import preview includes each row's amount. A new payee keeps the row's category on the entry and proposes that category as the default; it stays unset until the owner accepts it, including after the ledger is opened again. Accepting the proposal sets that category as the default. A confirmed alias is the existing payee and is not proposed. A timestamp whose UTC conversion falls on another calendar day keeps the date in the row's own offset. The import screen has not been checked on a device.

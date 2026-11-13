@@ -100,6 +100,14 @@ public final class Ledger {
             )
             """
         )
+        try connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS proposed_payee_default (
+                counterparty_id TEXT PRIMARY KEY NOT NULL REFERENCES counterparty(id),
+                category_id TEXT NOT NULL REFERENCES category(id)
+            )
+            """
+        )
         try connection.execute("UPDATE category SET counts_as_spending = 0 WHERE name = 'Savings'")
         try connection.execute(
             """
@@ -110,6 +118,10 @@ public final class Ledger {
                 ORDER BY rowid LIMIT 1
             )
             WHERE default_category_id IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM proposed_payee_default AS proposal
+                WHERE proposal.counterparty_id = counterparty.id
+              )
             """
         )
     }
@@ -123,6 +135,10 @@ public final class Ledger {
     }
 
     public func record(_ draft: EntryDraft) throws -> Transaction {
+        try record(draft, proposeDefaultForNewPayee: false)
+    }
+
+    func record(_ draft: EntryDraft, proposeDefaultForNewPayee: Bool) throws -> Transaction {
         if draft.kind == .refund, draft.originalPurchaseID != nil {
             return try recordLinkedRefund(draft)
         }
@@ -146,12 +162,19 @@ public final class Ledger {
         let entryID = UUID()
         try connection.execute("BEGIN")
         do {
-            let counterpartyID = try findOrCreateCounterparty(named: counterpartyName, defaultCategory: category.id)
+            let counterpartyID = try findOrCreateCounterparty(
+                named: counterpartyName,
+                defaultCategory: category.id,
+                proposeInsteadOfApplying: proposeDefaultForNewPayee
+            )
             let storedCounterparty = try requireCounterparty(id: counterpartyID)
-            let provenance: CategoryProvenance = draft.overridesCategory
-                || storedCounterparty.defaultCategory.id != category.id
-                ? .overridden
-                : .inherited
+            let proposedCategoryID = try proposedCategoryID(for: counterpartyID)
+            let provenance = categoryProvenance(
+                draft: draft,
+                counterparty: storedCounterparty,
+                category: category,
+                proposedCategoryID: proposedCategoryID
+            )
             try insertEntry(
                 id: entryID,
                 amount: amount,
@@ -225,16 +248,54 @@ public final class Ledger {
         return (start, end)
     }
 
-    func findOrCreateCounterparty(named name: String, defaultCategory: Category.ID) throws -> UUID {
+    func findOrCreateCounterparty(
+        named name: String,
+        defaultCategory: Category.ID,
+        proposeInsteadOfApplying: Bool = false
+    ) throws -> UUID {
         if let resolved = try resolveCounterpartyID(named: name) {
             return resolved
         }
         let id = UUID()
-        try connection.execute(
-            "INSERT INTO counterparty (id, name, default_category_id) VALUES (?, ?, ?)",
-            bindings: [.text(stored(id)), .text(name), .text(stored(defaultCategory.rawValue))]
-        )
+        if proposeInsteadOfApplying {
+            try connection.execute(
+                "INSERT INTO counterparty (id, name, default_category_id) VALUES (?, ?, NULL)",
+                bindings: [.text(stored(id)), .text(name)]
+            )
+            try connection.execute(
+                "INSERT INTO proposed_payee_default (counterparty_id, category_id) VALUES (?, ?)",
+                bindings: [.text(stored(id)), .text(stored(defaultCategory.rawValue))]
+            )
+        } else {
+            try connection.execute(
+                "INSERT INTO counterparty (id, name, default_category_id) VALUES (?, ?, ?)",
+                bindings: [.text(stored(id)), .text(name), .text(stored(defaultCategory.rawValue))]
+            )
+        }
         return id
+    }
+
+    func proposedCategoryID(for counterpartyID: UUID) throws -> Category.ID? {
+        let rows = try connection.query(
+            "SELECT category_id FROM proposed_payee_default WHERE counterparty_id = ?",
+            bindings: [.text(stored(counterpartyID))]
+        )
+        guard let text = rows.first?.first?.text, let id = UUID(uuidString: text) else { return nil }
+        return Category.ID(rawValue: id)
+    }
+
+    private func categoryProvenance(
+        draft: EntryDraft,
+        counterparty: Counterparty,
+        category: Category,
+        proposedCategoryID: Category.ID?
+    ) -> CategoryProvenance {
+        if draft.overridesCategory { return .overridden }
+        if let defaultCategory = counterparty.defaultCategory {
+            return defaultCategory.id == category.id ? .inherited : .overridden
+        }
+        if proposedCategoryID == category.id { return .inherited }
+        return .overridden
     }
 
     func resolveCounterpartyID(named name: String) throws -> UUID? {
