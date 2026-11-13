@@ -41,6 +41,45 @@ import Testing
     #expect(comparison.absoluteChangeCents == 0)
 }
 
+@Test func searchFiltersByCategoryAndInclusiveDateRange() throws {
+    let ledger = try Ledger.openInMemory()
+    let supermarket = try namedCategory(ledger, "Supermarket")
+    let before = try recordEntry(ledger, cents: 8_000, kind: .expense, counterparty: "REWE", date: "2025-12-31", category: "Supermarket")
+    let onStart = try recordEntry(ledger, cents: 6_000, kind: .expense, counterparty: "REWE", date: "2026-01-01", category: "Supermarket")
+    let restaurant = try recordEntry(ledger, cents: 9_000, kind: .expense, counterparty: "Middle Eats", date: "2026-01-15", category: "Restaurant")
+    let onEnd = try recordEntry(ledger, cents: 4_000, kind: .expense, counterparty: "Lidl", date: "2026-01-31", category: "Supermarket")
+    let after = try recordEntry(ledger, cents: 8_000, kind: .expense, counterparty: "REWE", date: "2026-02-01", category: "Supermarket")
+    let today = try #require(ReportingDate(iso8601: "2026-04-10"))
+    let range = DateRange(
+        start: try #require(ReportingDate(iso8601: "2026-01-01")),
+        end: try #require(ReportingDate(iso8601: "2026-01-31"))
+    )
+
+    let byCategory = try ledger.runReport(.search(ReportQuery(measure: .spending, categoryID: supermarket.id)), today: today)
+    #expect(byCategory == .transactions([after, onEnd, onStart, before]))
+
+    let byDates = try ledger.runReport(.search(ReportQuery(measure: .spending, range: range)), today: today)
+    #expect(byDates == .transactions([onEnd, restaurant, onStart]))
+
+    let byCategoryAndDates = try ledger.runReport(
+        .search(ReportQuery(measure: .spending, range: range, categoryID: supermarket.id)),
+        today: today
+    )
+    #expect(byCategoryAndDates == .transactions([onEnd, onStart]))
+
+    let withVendorAndAmount = try ledger.runReport(
+        .search(ReportQuery(
+            measure: .spending,
+            range: range,
+            categoryID: supermarket.id,
+            counterpartyName: "REWE",
+            amount: .greaterThan(Cents(5_000))
+        )),
+        today: today
+    )
+    #expect(withVendorAndAmount == .transactions([onStart]))
+}
+
 @Test func searchFindsAnAliasAndAnAmountAndSkipsTrash() throws {
     let ledger = try Ledger.openInMemory()
     let amazon = try recordEntry(ledger, cents: 8_000, kind: .expense, counterparty: "Amazon", date: "2026-01-02", category: "Supermarket")
@@ -50,6 +89,73 @@ import Testing
     let today = try #require(ReportingDate(iso8601: "2026-02-01"))
     let found = try ledger.runReport(.search(ReportQuery(measure: .spending, counterpartyName: "AMZN MKTP", amount: .greaterThan(Cents(5000)))), today: today)
     #expect(found == .transactions([amazon]))
+}
+
+@Test func trashedEntriesAreExcludedFromBreakdownsAndComparisons() throws {
+    let ledger = try Ledger.openInMemory()
+    _ = try recordEntry(ledger, cents: 1000, kind: .expense, counterparty: "REWE", date: "2026-01-15", category: "Supermarket")
+    let february = try recordEntry(ledger, cents: 8000, kind: .expense, counterparty: "REWE", date: "2026-02-02", category: "Supermarket")
+    try ledger.trash(february.id, on: try #require(ReportingDate(iso8601: "2026-02-03")))
+    _ = try recordEntry(ledger, cents: 3000, kind: .expense, counterparty: "REWE", date: "2026-03-05", category: "Supermarket")
+    let marchTrash = try recordEntry(ledger, cents: 9000, kind: .expense, counterparty: "Osteria", date: "2026-03-06", category: "Restaurant")
+    try ledger.trash(marchTrash.id, on: try #require(ReportingDate(iso8601: "2026-03-07")))
+    _ = try recordEntry(ledger, cents: 4000, kind: .expense, counterparty: "REWE", date: "2026-04-04", category: "Supermarket")
+    let aprilTrash = try recordEntry(ledger, cents: 7000, kind: .expense, counterparty: "REWE", date: "2026-04-02", category: "Supermarket")
+    try ledger.trash(aprilTrash.id, on: try #require(ReportingDate(iso8601: "2026-04-03")))
+    let marchIncome = try recordEntry(ledger, cents: 150_000, kind: .income, counterparty: "Acme", date: "2026-03-08", category: "Salary")
+    try ledger.trash(marchIncome.id, on: try #require(ReportingDate(iso8601: "2026-03-09")))
+    _ = try recordEntry(ledger, cents: 10_000, kind: .income, counterparty: "Acme", date: "2026-04-03", category: "Salary")
+    let aprilIncome = try recordEntry(ledger, cents: 50_000, kind: .income, counterparty: "Acme", date: "2026-04-05", category: "Salary")
+    try ledger.trash(aprilIncome.id, on: try #require(ReportingDate(iso8601: "2026-04-06")))
+
+    let today = try #require(ReportingDate(iso8601: "2026-04-10"))
+    let range = DateRange(
+        start: try #require(ReportingDate(iso8601: "2026-01-01")),
+        end: try #require(ReportingDate(iso8601: "2026-04-30"))
+    )
+    guard case .comparison(let spending) = try ledger.runReport(.comparison(measure: .spending, categoryID: nil, counterpartyName: nil), today: today) else {
+        Issue.record("Expected a spending comparison")
+        return
+    }
+    #expect(spending.earlier.cents == 3000)
+    #expect(spending.later.cents == 4000)
+    #expect(spending.absoluteChangeCents == 1000)
+
+    guard case .comparison(let income) = try ledger.runReport(.comparison(measure: .income, categoryID: nil, counterpartyName: nil), today: today) else {
+        Issue.record("Expected an income comparison")
+        return
+    }
+    #expect(income.earlier.cents == 0)
+    #expect(income.later.cents == 10_000)
+    #expect(income.absoluteChangeCents == 10_000)
+
+    guard case .breakdown(let months, _) = try ledger.runReport(.breakdown(ReportQuery(measure: .spending, range: range, grouping: .month)), today: today) else {
+        Issue.record("Expected a monthly breakdown")
+        return
+    }
+    #expect(months.map(\.month) == ["2026-01", "2026-02", "2026-03", "2026-04"])
+    #expect(months.map(\.cents) == [1000, 0, 3000, 4000])
+
+    guard case .breakdown(let categories, _) = try ledger.runReport(.breakdown(ReportQuery(measure: .spending, range: range, grouping: .category)), today: today) else {
+        Issue.record("Expected a category breakdown")
+        return
+    }
+    #expect(categories.map(\.categoryName) == ["Salary", "Supermarket"])
+    #expect(categories.map(\.cents) == [0, 8000])
+
+    guard case .breakdown(let both, _) = try ledger.runReport(.breakdown(ReportQuery(measure: .spending, range: range, grouping: .monthAndCategory)), today: today) else {
+        Issue.record("Expected a month and category breakdown")
+        return
+    }
+    #expect(both.map(\.month) == ["2026-01", "2026-02", "2026-03", "2026-04", "2026-04"])
+    #expect(both.map(\.categoryName) == ["Supermarket", nil, "Supermarket", "Salary", "Supermarket"] as [String?])
+    #expect(both.map(\.cents) == [1000, 0, 3000, 0, 4000])
+
+    guard case .breakdown(let incomeMonths, _) = try ledger.runReport(.breakdown(ReportQuery(measure: .income, range: range, grouping: .month)), today: today) else {
+        Issue.record("Expected an income breakdown")
+        return
+    }
+    #expect(incomeMonths.map(\.cents) == [0, 0, 0, 10_000])
 }
 
 @Test func breakdownGroupsACategoryAcrossMonths() throws {
