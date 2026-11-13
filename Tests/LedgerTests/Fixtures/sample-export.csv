@@ -1,0 +1,30 @@
+Date,Amount,Source Currency,Target Currency,Exchange Rate,Budget Book,Source Account,Target Account,Folder,Category,Payee,Tags,Notes,Pending
+2025-01-29T17:12:00+0100,4164.84,EUR,EUR,1.0,"Germany","N26","","Income","Salary","ALDI Data and Analytics","","",False
+2025-02-12T19:28:43+0100,-20.0,EUR,EUR,1.0,"Germany","Cash","","Free time","Restaurant","Middle Eats","","",False
+2025-02-12T19:30:13+0100,-34.22,EUR,EUR,1.0,"Germany","Revolut","","Groceries","Supermarket","ALDI Nord","","",False
+2025-02-12T19:31:20+0100,-8.4,EUR,EUR,1.0,"Germany","Revolut","","Groceries","Supermarket","dm","","",False
+2025-02-12T20:47:14+0100,255.0,EUR,EUR,1.0,"Germany","N26","","Income","Kindergeld","Agentur für Arbeit","","",False
+2025-02-13T10:48:32+0100,-24.98,EUR,EUR,1.0,"Germany","N26","","Groceries","Supermarket","Amazon","","",False
+2025-02-13T10:50:55+0100,-19.99,EUR,EUR,1.0,"Germany","N26","","Groceries","Supermarket","Amazon","","",False
+2025-02-13T10:52:05+0100,-7.8,EUR,EUR,1.0,"Germany","N26","","Groceries","Supermarket","Amazon","","",False
+2025-02-13T18:42:15+0100,-70.55,EUR,EUR,1.0,"Germany","N26","","Living","Utilities","WinSIM ","","",False
+2025-02-14T17:25:45+0100,-20.0,EUR,EUR,1.0,"Germany","Revolut","","Free time","Restaurant","Mint42","","",False
+2025-02-15T11:30:46+0100,-34.95,EUR,EUR,1.0,"Germany","Revolut","","Living","Utilities","Apple One","","",False
+2025-02-15T17:08:22+0100,-12.97,EUR,EUR,1.0,"Germany","Revolut","","Groceries","Supermarket","Asia Shop","","",False
+2025-02-15T17:09:58+0100,-11.55,EUR,EUR,1.0,"Germany","Revolut","","Groceries","Supermarket","dm","","",False
+2025-02-15T17:10:33+0100,-38.05,EUR,EUR,1.0,"Germany","Revolut","","Groceries","Supermarket","ALDI Nord","","",False
+2025-02-15T17:10:44+0100,-19.58,EUR,EUR,1.0,"Germany","N26","","Groceries","Supermarket","REWE ","","",False
+2025-02-15T23:38:07+0100,-61.97,EUR,EUR,1.0,"Germany","Revolut","","Free time","Reading","The New Yorker","","",False
+2025-02-16T15:08:06+0100,-10.24,EUR,EUR,1.0,"Germany","Revolut","","Free time","Reading","Readwise","","",False
+2025-02-16T18:51:00+0100,-41.58,EUR,EUR,1.0,"Germany","N26","","Free time","Hotel","Booking","","For the stay on April 29-30",False
+2025-02-16T21:55:00+0100,-65.98,EUR,EUR,1.0,"Germany","Revolut","","Mobility","Train","DB","","For the travel on April 1-2",False
+2025-02-16T21:56:49+0100,-34.48,EUR,EUR,1.0,"Germany","Revolut","","Mobility","Train","DB","","For the travel on April 8",False
+2025-02-17T05:52:13+0100,-22.99,EUR,EUR,1.0,"Germany","Revolut","","Living","Software","OpenAI","","",False
+2025-02-17T20:00:59+0100,-55.08,EUR,EUR,1.0,"Germany","N26","","Living","Utilities","Radiofunk","","",False
+2025-02-18T19:12:59+0100,-70.44,EUR,EUR,1.0,"Germany","N26","","Living","Utilities","WinSIM ","","",False
+2025-02-19T12:21:26+0100,-19.63,EUR,EUR,1.0,"Germany","Revolut","","Groceries","Supermarket","REWE ","","",False
+2025-02-19T12:32:35+0100,-29.99,EUR,EUR,1.0,"Germany","Revolut","","Living","Software","Budgetflow ","","",False
+2025-02-19T12:49:24+0100,-12.2,EUR,EUR,1.0,"Germany","Revolut","","Groceries","Supermarket","dm","","",False
+2025-02-19T20:05:50+0100,-19.29,EUR,EUR,1.0,"Germany","Revolut","","Living","Software","Cursor","","",False
+2025-02-20T19:07:38+0100,-28.8,EUR,EUR,1.0,"Germany","Revolut","","Mobility","Taxi","Bolt","","",False
+2025-02-20T19:46:33+0100,-3.53,EUR,EUR,1.0,"Germany","Revolut","","Groceries","Supermarket","Edeka","","",False

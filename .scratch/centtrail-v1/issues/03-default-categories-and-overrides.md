@@ -4,11 +4,16 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** ledger implemented
 
 - [ ] Capture pre-fills the category from the counterparty's default category
-- [ ] An entry records whether its category is inherited or overridden, even when both name the same category
-- [ ] Changing a default category recategorizes inherited entries in all reports, past periods included
-- [ ] Entries with an explicit override keep their category when the default changes
-- [ ] Changing one entry's category does not change the counterparty's default category
+- [x] An entry records whether its category is inherited or overridden, even when both name the same category
+- [x] Changing a default category recategorizes inherited entries in all reports, past periods included
+- [x] Entries with an explicit override keep their category when the default changes
+- [x] Changing one entry's category does not change the counterparty's default category
 - [ ] The owner can view and edit counterparties and their default categories
+
+## Comments
+
+The capture screen calls `prefillCategory` when the counterparty changes. That screen has not been checked on a device.
+The People screen lists counterparties and edits their default categories. It has not been checked on a device.
