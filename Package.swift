@@ -10,6 +10,8 @@ let package = Package(
     ],
     products: [
         .library(name: "Ledger", targets: ["Ledger"]),
+        .library(name: "CenttrailShell", targets: ["CenttrailShell"]),
+        .executable(name: "Centtrail", targets: ["CenttrailMac"]),
     ],
     targets: [
         .target(
@@ -17,6 +19,14 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
             ]
+        ),
+        .target(
+            name: "CenttrailShell",
+            dependencies: ["Ledger"]
+        ),
+        .executableTarget(
+            name: "CenttrailMac",
+            dependencies: ["CenttrailShell"]
         ),
         .testTarget(
             name: "LedgerTests",

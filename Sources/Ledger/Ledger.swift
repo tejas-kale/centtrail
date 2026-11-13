@@ -1,7 +1,9 @@
 import Foundation
 
-public struct LedgerError: Error, Equatable {
+public struct LedgerError: Error, Equatable, LocalizedError {
     public let message: String
+
+    public var errorDescription: String? { message }
 }
 
 public struct Category: Hashable, Sendable, Identifiable {
@@ -27,6 +29,10 @@ public final class Ledger {
 
     public static func openInMemory() throws -> Ledger {
         try Ledger(path: ":memory:")
+    }
+
+    public static func open(at file: URL) throws -> Ledger {
+        try Ledger(path: file.path(percentEncoded: false))
     }
 
     init(path: String) throws {
@@ -155,7 +161,7 @@ public final class Ledger {
             FROM entry
             JOIN counterparty ON counterparty.id = entry.counterparty_id
             JOIN category ON category.id = entry.category_id
-            ORDER BY entry.reporting_date, entry.rowid
+            ORDER BY entry.reporting_date DESC, entry.rowid DESC
             """
         )
         return try rows.map { row in
