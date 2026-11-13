@@ -64,21 +64,20 @@ public final class Ledger {
     }
 
     public func record(_ draft: EntryDraft) throws -> Transaction {
-        guard let amount = draft.amount else {
-            throw RecordEntryError.incomplete([.amount])
-        }
-        guard let kind = draft.kind else {
-            throw RecordEntryError.incomplete([.kind])
-        }
         let counterpartyName = draft.counterparty?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !counterpartyName.isEmpty else {
-            throw RecordEntryError.incomplete([.counterparty])
-        }
-        guard let reportingDate = draft.reportingDate else {
-            throw RecordEntryError.incomplete([.reportingDate])
-        }
-        guard let categoryID = draft.categoryID else {
-            throw RecordEntryError.incomplete([.category])
+        var missing: Set<EntryField> = []
+        if draft.amount == nil { missing.insert(.amount) }
+        if draft.kind == nil { missing.insert(.kind) }
+        if counterpartyName.isEmpty { missing.insert(.counterparty) }
+        if draft.reportingDate == nil { missing.insert(.reportingDate) }
+        if draft.categoryID == nil { missing.insert(.category) }
+        guard missing.isEmpty,
+              let amount = draft.amount,
+              let kind = draft.kind,
+              let reportingDate = draft.reportingDate,
+              let categoryID = draft.categoryID
+        else {
+            throw RecordEntryError.incomplete(missing)
         }
 
         let category = try category(id: categoryID)

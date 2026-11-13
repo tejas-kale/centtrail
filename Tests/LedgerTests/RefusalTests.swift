@@ -126,3 +126,18 @@ import Testing
     }
     #expect(try ledger.transactions().isEmpty)
 }
+
+@Test func savingIsRefusedUntilEveryRequiredFieldIsSet() throws {
+    let ledger = try Ledger.openInMemory()
+
+    #expect(throws: RecordEntryError.incomplete([
+        .amount,
+        .kind,
+        .counterparty,
+        .reportingDate,
+        .category,
+    ])) {
+        try ledger.record(EntryDraft())
+    }
+    #expect(try ledger.transactions().isEmpty)
+}
