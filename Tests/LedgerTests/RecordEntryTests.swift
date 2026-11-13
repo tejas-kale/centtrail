@@ -23,3 +23,36 @@ import Testing
     #expect(recorded.reportingDate.iso8601 == "2026-11-02")
     #expect(try ledger.transactions() == [recorded])
 }
+
+@Test func everyRecordHasAGloballyUniqueStableIdentity() throws {
+    let ledger = try Ledger.openInMemory()
+    let other = try Ledger.openInMemory()
+    let recorded = try recordExpense(ledger)
+    let otherRecorded = try recordExpense(other)
+
+    #expect(recorded.id != otherRecorded.id)
+    #expect(recorded.counterparty.id != otherRecorded.counterparty.id)
+    #expect(try ledger.transactions().map(\.id) == [recorded.id])
+    #expect(try ledger.transactions().map(\.counterparty.id) == [recorded.counterparty.id])
+
+    let categoryIDs = try ledger.categories().map(\.id)
+    let rereadCategoryIDs = try ledger.categories().map(\.id)
+    let otherCategoryIDs = try other.categories().map(\.id)
+    #expect(categoryIDs == rereadCategoryIDs)
+    #expect(Set(categoryIDs).count == categoryIDs.count)
+    #expect(Set(categoryIDs).isDisjoint(with: otherCategoryIDs))
+}
+
+private func recordExpense(_ ledger: Ledger) throws -> Transaction {
+    let supermarket = try #require(try ledger.categories().first { $0.name == "Supermarket" })
+    let reportingDate = try #require(ReportingDate(iso8601: "2026-11-02"))
+    return try ledger.record(
+        EntryDraft(
+            amount: Cents(1250),
+            kind: .expense,
+            counterparty: "REWE",
+            reportingDate: reportingDate,
+            categoryID: supermarket.id
+        )
+    )
+}

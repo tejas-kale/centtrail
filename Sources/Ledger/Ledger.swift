@@ -24,7 +24,6 @@ public struct Category: Hashable, Sendable, Identifiable {
 
 public final class Ledger {
     private let connection: SQLiteConnection
-    private var nextIdentity = 0
 
     public static func openInMemory() throws -> Ledger {
         try Ledger(path: ":memory:")
@@ -75,8 +74,8 @@ public final class Ledger {
         }
 
         let category = try category(id: categoryID)
-        let counterpartyID = makeIdentity()
-        let entryID = makeIdentity()
+        let counterpartyID = UUID()
+        let entryID = UUID()
         try connection.execute("BEGIN")
         do {
             try connection.execute(
@@ -165,15 +164,6 @@ public final class Ledger {
             throw LedgerError(message: "Unknown category.")
         }
         return Category(id: id, name: name)
-    }
-
-    private func makeIdentity() -> UUID {
-        nextIdentity += 1
-        let suffix = String(format: "%012d", nextIdentity)
-        guard let id = UUID(uuidString: "00000000-0000-4000-8000-\(suffix)") else {
-            preconditionFailure("The identity counter produced an invalid UUID.")
-        }
-        return id
     }
 
     private func stored(_ id: UUID) -> String {
