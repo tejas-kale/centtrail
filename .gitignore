@@ -6,3 +6,5 @@ xcuserdata/
 *.xcuserstate
 .venv/
 .worktrees/
+Apps/Centtrail.xcodeproj/
+build/

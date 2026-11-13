@@ -1,0 +1,64 @@
+# Generates Apps/Centtrail.xcodeproj (gitignored): run `xcodegen generate` in Apps/.
+# The apps are thin hosts; all code lives in the root Swift package.
+name: Centtrail
+options:
+  bundleIdPrefix: com.tejaskale
+  deploymentTarget:
+    iOS: "26.0"
+    macOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: NDMG62GXZA
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "2"
+    PRODUCT_NAME: Centtrail
+    PRODUCT_BUNDLE_IDENTIFIER: com.tejaskale.centtrail
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_CFBundleDisplayName: Centtrail
+    # Only Apple's standard encryption: TestFlight skips the export-compliance question.
+    INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+packages:
+  Centtrail:
+    path: ..
+targets:
+  CenttrailIOS:
+    type: application
+    platform: iOS
+    sources:
+      - iOS
+      - Assets.xcassets
+    dependencies:
+      - package: Centtrail
+        product: CenttrailShell
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+  CenttrailMac:
+    type: application
+    platform: macOS
+    sources:
+      # Shared with the package's CenttrailMac executable target.
+      - ../Sources/CenttrailMac
+      - Assets.xcassets
+    dependencies:
+      - package: Centtrail
+        product: CenttrailShell
+    settings:
+      base:
+        ENABLE_HARDENED_RUNTIME: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.finance
+    entitlements:
+      path: macOS/Centtrail.entitlements
+      properties:
+        # The ledger lives in the sandbox container's Application Support; no other file or network access.
+        com.apple.security.app-sandbox: true
