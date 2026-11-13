@@ -74,9 +74,10 @@ public final class Ledger {
         guard !counterpartyName.isEmpty else {
             throw RecordEntryError.incomplete([.counterparty])
         }
-        guard let reportingDate = draft.reportingDate,
-              let categoryID = draft.categoryID
-        else {
+        guard let reportingDate = draft.reportingDate else {
+            throw RecordEntryError.incomplete([.reportingDate])
+        }
+        guard let categoryID = draft.categoryID else {
             throw LedgerError(message: "The entry is incomplete.")
         }
 

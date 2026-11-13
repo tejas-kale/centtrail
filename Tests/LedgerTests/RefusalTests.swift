@@ -73,3 +73,20 @@ import Testing
     }
     #expect(try ledger.transactions().isEmpty)
 }
+
+@Test func savingIsRefusedWhenTheReportingDateIsMissing() throws {
+    let ledger = try Ledger.openInMemory()
+    let supermarket = try #require(try ledger.categories().first { $0.name == "Supermarket" })
+
+    #expect(throws: RecordEntryError.incomplete([.reportingDate])) {
+        try ledger.record(
+            EntryDraft(
+                amount: Cents(1250),
+                kind: .expense,
+                counterparty: "REWE",
+                categoryID: supermarket.id
+            )
+        )
+    }
+    #expect(try ledger.transactions().isEmpty)
+}
