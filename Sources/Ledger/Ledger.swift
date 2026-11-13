@@ -78,7 +78,7 @@ public final class Ledger {
             throw RecordEntryError.incomplete([.reportingDate])
         }
         guard let categoryID = draft.categoryID else {
-            throw LedgerError(message: "The entry is incomplete.")
+            throw RecordEntryError.incomplete([.category])
         }
 
         let category = try category(id: categoryID)
