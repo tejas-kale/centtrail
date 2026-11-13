@@ -144,7 +144,7 @@ public struct ReportingDate: Hashable, Sendable {
 public struct Counterparty: Hashable, Sendable, Identifiable {
     public let id: ID
     public let name: String
-    public let defaultCategory: Category
+    public let defaultCategory: Category?
 
     public struct ID: Hashable, Sendable {
         public let rawValue: UUID
@@ -154,7 +154,7 @@ public struct Counterparty: Hashable, Sendable, Identifiable {
         }
     }
 
-    public init(id: ID, name: String, defaultCategory: Category) {
+    public init(id: ID, name: String, defaultCategory: Category?) {
         self.id = id
         self.name = name
         self.defaultCategory = defaultCategory

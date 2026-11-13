@@ -61,6 +61,10 @@ struct ReportsScreen: View {
     @State private var answer = ""
     @State private var searchName = ""
     @State private var searchAmount = ""
+    @State private var searchCategoryID: LedgerCategoryID?
+    @State private var searchFrom = ""
+    @State private var searchTo = ""
+    @State private var searchNotice = ""
     @State private var matches: [LedgerTransaction] = []
 
     var body: some View {
@@ -116,7 +120,20 @@ struct ReportsScreen: View {
                 Section("Search") {
                     TextField("Vendor", text: $searchName)
                     TextField("Over euros", text: $searchAmount)
+                    Picker("Category", selection: $searchCategoryID) {
+                        Text("Any").tag(Optional<LedgerCategoryID>.none)
+                        ForEach(model.categories) { category in
+                            Text(category.name).tag(Optional(category.id))
+                        }
+                    }
+                    TextField("From", text: $searchFrom, prompt: Text("YYYY-MM-DD"))
+                    TextField("To", text: $searchTo, prompt: Text("YYYY-MM-DD"))
                     Button("Search", action: search)
+                    if !searchNotice.isEmpty {
+                        Text(searchNotice)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                     ForEach(matches) { transaction in
                         NavigationLink {
                             TransactionDetail(transaction: transaction, ledger: model.ledger)
@@ -171,9 +188,43 @@ struct ReportsScreen: View {
     private func search() {
         var amount: AmountCondition?
         if let euros = Int(searchAmount) { amount = .greaterThan(Cents(euros * 100)) }
-        let query = ReportQuery(measure: .spending, counterpartyName: searchName.isEmpty ? nil : searchName, amount: amount)
+        let range: DateRange?
+        switch dateRange() {
+        case .absent:
+            range = nil
+        case .ready(let value):
+            range = value
+        case .invalid:
+            searchNotice = "Enter both dates as YYYY-MM-DD."
+            matches = []
+            return
+        }
+        searchNotice = ""
+        let query = ReportQuery(
+            measure: .spending,
+            range: range,
+            categoryID: searchCategoryID,
+            counterpartyName: searchName.isEmpty ? nil : searchName,
+            amount: amount
+        )
         guard case .transactions(let found)? = try? model.ledger.runReport(.search(query), today: model.today) else { return }
         matches = found
+    }
+
+    private enum DateRangeInput {
+        case absent
+        case ready(DateRange)
+        case invalid
+    }
+
+    private func dateRange() -> DateRangeInput {
+        let fromText = searchFrom.trimmingCharacters(in: .whitespacesAndNewlines)
+        let toText = searchTo.trimmingCharacters(in: .whitespacesAndNewlines)
+        if fromText.isEmpty && toText.isEmpty { return .absent }
+        guard let start = ReportingDate(iso8601: fromText), let end = ReportingDate(iso8601: toText) else {
+            return .invalid
+        }
+        return .ready(DateRange(start: start, end: end))
     }
 
     private func present(_ result: ReportResult) {
@@ -230,8 +281,9 @@ struct PeopleScreen: View {
                 Section("Counterparties") {
                     ForEach(people) { person in
                         Picker(person.name, selection: binding(for: person)) {
+                            Text("None").tag(Optional<LedgerCategoryID>.none)
                             ForEach(model.categories) { category in
-                                Text(category.name).tag(category.id)
+                                Text(category.name).tag(Optional(category.id))
                             }
                         }
                     }
@@ -252,11 +304,13 @@ struct PeopleScreen: View {
         }
     }
 
-    private func binding(for person: Counterparty) -> Binding<LedgerCategoryID> {
+    private func binding(for person: Counterparty) -> Binding<LedgerCategoryID?> {
         Binding(
-            get: { person.defaultCategory.id },
+            get: { person.defaultCategory?.id },
             set: { newValue in
-                try? model.ledger.setDefaultCategory(newValue, for: person.id)
+                if let newValue {
+                    try? model.ledger.setDefaultCategory(newValue, for: person.id)
+                }
                 reload()
             }
         )
@@ -316,6 +370,8 @@ struct ImportScreen: View {
     @ObservedObject var model: CaptureModel
     @State private var csv = ""
     @State private var rows: [ImportRow] = []
+    @State private var proposals: [ProposedPayeeDefault] = []
+    @State private var acceptedPayees: Set<String> = []
     @State private var dateColumn = "Date"
     @State private var message = ""
 
@@ -329,11 +385,28 @@ struct ImportScreen: View {
                 if !message.isEmpty { Text(message) }
                 ForEach(rows) { row in
                     VStack(alignment: .leading) {
-                        Text("\(row.payee ?? "") · \(row.categoryName ?? "") · \(row.reportingDate ?? "")")
+                        Text("\(row.payee ?? "") · \(row.amountText ?? "") · \(row.categoryName ?? "") · \(row.reportingDate ?? "")")
                         Text(stateLabel(row.state)).font(.footnote).foregroundStyle(.secondary)
+                        if let proposed = row.proposedDefaultCategoryName, let payee = row.payee {
+                            Text("Proposed default for \(payee): \(proposed)")
+                                .font(.footnote)
+                            if acceptedPayees.contains(payee) {
+                                Text("Default will be accepted on commit.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Button("Accept default") { acceptedPayees.insert(payee) }
+                            }
+                        }
                     }
                     if case .uncertainMatch = row.state {
                         Button("Keep this row") { keep(row) }
+                    }
+                }
+                ForEach(proposals) { proposal in
+                    VStack(alignment: .leading) {
+                        Text("Proposed default for \(proposal.payee): \(proposal.categoryName)")
+                        Button("Accept default") { accept(proposal) }
                     }
                 }
             }
@@ -343,18 +416,36 @@ struct ImportScreen: View {
 
     private func preview() {
         rows = (try? model.ledger.previewImport(csv, mapping: ImportMapping(reportingDateColumn: dateColumn))) ?? []
+        proposals = (try? model.ledger.proposedPayeeDefaults()) ?? []
         message = "\(rows.count) rows"
     }
 
     private func commit() {
-        let result = try? model.ledger.commitImport(csv, mapping: ImportMapping(reportingDateColumn: dateColumn))
+        let result = try? model.ledger.commitImport(
+            csv,
+            mapping: ImportMapping(reportingDateColumn: dateColumn),
+            acceptedPayees: acceptedPayees
+        )
         message = "Imported \(result?.importedCount ?? 0)"
+        acceptedPayees = []
         try? model.reloadFromOutside()
         preview()
     }
 
     private func keep(_ row: ImportRow) {
-        _ = try? model.ledger.commitImport(csv, mapping: ImportMapping(reportingDateColumn: dateColumn), uncertain: [row.index: .keep])
+        _ = try? model.ledger.commitImport(
+            csv,
+            mapping: ImportMapping(reportingDateColumn: dateColumn),
+            uncertain: [row.index: .keep],
+            acceptedPayees: acceptedPayees
+        )
+        acceptedPayees = []
+        try? model.reloadFromOutside()
+        preview()
+    }
+
+    private func accept(_ proposal: ProposedPayeeDefault) {
+        try? model.ledger.acceptProposedPayeeDefault(for: proposal.counterpartyID)
         try? model.reloadFromOutside()
         preview()
     }

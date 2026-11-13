@@ -4,10 +4,14 @@
 
 **Blocked by:** 01
 
-**Status:** claimed
+**Status:** ledger implemented
 
-- [ ] Deleting an entry moves it to trash with a trashed-on date
-- [ ] Restoring an entry from trash returns it to reports unchanged
-- [ ] Purging with an injected date removes entries trashed more than 30 days earlier and keeps the rest
-- [ ] Trashed entries never count in totals, breakdowns, comparisons or search
+- [x] Deleting an entry moves it to trash with a trashed-on date
+- [x] Restoring an entry from trash returns it to reports unchanged
+- [x] Purging with an injected date removes entries trashed more than 30 days earlier and keeps the rest
+- [x] Trashed entries never count in totals, breakdowns, comparisons or search
 - [ ] A trash screen lists trashed entries with their days remaining
+
+## Comments
+
+The trash screen lists trashed entries and their days remaining. It has not been checked on a device.
