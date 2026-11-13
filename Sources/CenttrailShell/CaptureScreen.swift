@@ -4,7 +4,7 @@ import Interpreter
 import Ledger
 import SwiftUI
 
-extension Notification.Name {
+public extension Notification.Name {
     static let centtrailNewEntry = Notification.Name("centtrailNewEntry")
 }
 

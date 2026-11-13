@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Select Xcode with the iOS 26 and macOS 26 SDKs
+        run: |
+          set -euo pipefail
+          # The macos-26 image's Xcode.app symlink is the newest installed Xcode.
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          echo "DEVELOPER_DIR=$(xcode-select -p)"
+          xcodebuild -version
+          swift --version
+          ios_sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+          sim_sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          mac_sdk="$(xcrun --sdk macosx --show-sdk-version)"
+          echo "iOS SDK ${ios_sdk}"
+          echo "iOS Simulator SDK ${sim_sdk}"
+          echo "macOS SDK ${mac_sdk}"
+          clt_plugin="/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib"
+          xcode_plugin="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib"
+          if [[ -f "${clt_plugin}" ]]; then echo "CLT testing macros: ${clt_plugin}"; else echo "CLT testing macros missing"; fi
+          if [[ -f "${xcode_plugin}" ]]; then echo "Xcode testing macros: ${xcode_plugin}"; else echo "Xcode testing macros missing"; fi
+          test "${ios_sdk%%.*}" -ge 26
+          test "${sim_sdk%%.*}" -ge 26
+          test "${mac_sdk%%.*}" -ge 26
+
+      - name: Build the package
+        run: swift build
+
+      - name: Test the package
+        run: swift test
+
+      - name: Build the Mac app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Apps/Centtrail.xcodeproj \
+            -scheme CenttrailMac \
+            -destination 'generic/platform=macOS' \
+            -configuration Debug \
+            -derivedDataPath "${RUNNER_TEMP}/centtrail-mac" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            build
+
+      - name: Build the iOS app for the simulator
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Apps/Centtrail.xcodeproj \
+            -scheme Centtrail \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath "${RUNNER_TEMP}/centtrail-ios" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            build

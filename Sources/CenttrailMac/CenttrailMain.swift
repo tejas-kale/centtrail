@@ -20,9 +20,9 @@ struct CenttrailMacApp: App {
 }
 
 struct CaptureEntryIntent: AppIntent {
-    static var title: LocalizedStringResource = "Record an entry"
-    static var description = IntentDescription("Opens an editable Centtrail draft. Nothing is saved until you confirm.")
-    static var openAppWhenRun = true
+    static let title: LocalizedStringResource = "Record an entry"
+    static let description = IntentDescription("Opens an editable Centtrail draft. Nothing is saved until you confirm.")
+    static let openAppWhenRun = true
 
     func perform() async throws -> some IntentResult {
         await MainActor.run {
