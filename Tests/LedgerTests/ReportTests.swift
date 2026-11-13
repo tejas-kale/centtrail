@@ -41,6 +41,45 @@ import Testing
     #expect(comparison.absoluteChangeCents == 0)
 }
 
+@Test func searchFiltersByCategoryAndInclusiveDateRange() throws {
+    let ledger = try Ledger.openInMemory()
+    let supermarket = try namedCategory(ledger, "Supermarket")
+    let before = try recordEntry(ledger, cents: 8_000, kind: .expense, counterparty: "REWE", date: "2025-12-31", category: "Supermarket")
+    let onStart = try recordEntry(ledger, cents: 6_000, kind: .expense, counterparty: "REWE", date: "2026-01-01", category: "Supermarket")
+    let restaurant = try recordEntry(ledger, cents: 9_000, kind: .expense, counterparty: "Middle Eats", date: "2026-01-15", category: "Restaurant")
+    let onEnd = try recordEntry(ledger, cents: 4_000, kind: .expense, counterparty: "Lidl", date: "2026-01-31", category: "Supermarket")
+    let after = try recordEntry(ledger, cents: 8_000, kind: .expense, counterparty: "REWE", date: "2026-02-01", category: "Supermarket")
+    let today = try #require(ReportingDate(iso8601: "2026-04-10"))
+    let range = DateRange(
+        start: try #require(ReportingDate(iso8601: "2026-01-01")),
+        end: try #require(ReportingDate(iso8601: "2026-01-31"))
+    )
+
+    let byCategory = try ledger.runReport(.search(ReportQuery(measure: .spending, categoryID: supermarket.id)), today: today)
+    #expect(byCategory == .transactions([after, onEnd, onStart, before]))
+
+    let byDates = try ledger.runReport(.search(ReportQuery(measure: .spending, range: range)), today: today)
+    #expect(byDates == .transactions([onEnd, restaurant, onStart]))
+
+    let byCategoryAndDates = try ledger.runReport(
+        .search(ReportQuery(measure: .spending, range: range, categoryID: supermarket.id)),
+        today: today
+    )
+    #expect(byCategoryAndDates == .transactions([onEnd, onStart]))
+
+    let withVendorAndAmount = try ledger.runReport(
+        .search(ReportQuery(
+            measure: .spending,
+            range: range,
+            categoryID: supermarket.id,
+            counterpartyName: "REWE",
+            amount: .greaterThan(Cents(5_000))
+        )),
+        today: today
+    )
+    #expect(withVendorAndAmount == .transactions([onStart]))
+}
+
 @Test func searchFindsAnAliasAndAnAmountAndSkipsTrash() throws {
     let ledger = try Ledger.openInMemory()
     let amazon = try recordEntry(ledger, cents: 8_000, kind: .expense, counterparty: "Amazon", date: "2026-01-02", category: "Supermarket")
