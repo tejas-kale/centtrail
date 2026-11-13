@@ -9,6 +9,7 @@ public struct LedgerError: Error, Equatable, LocalizedError {
 public struct Category: Hashable, Sendable, Identifiable {
     public let id: ID
     public let name: String
+    public let countsAsSpending: Bool
 
     public struct ID: Hashable, Sendable {
         public let rawValue: UUID
@@ -18,14 +19,15 @@ public struct Category: Hashable, Sendable, Identifiable {
         }
     }
 
-    public init(id: ID, name: String) {
+    public init(id: ID, name: String, countsAsSpending: Bool = true) {
         self.id = id
         self.name = name
+        self.countsAsSpending = countsAsSpending
     }
 }
 
 public final class Ledger {
-    private let connection: SQLiteConnection
+    let connection: SQLiteConnection
 
     public static func openInMemory() throws -> Ledger {
         try Ledger(path: ":memory:")
@@ -66,10 +68,64 @@ public final class Ledger {
             )
             """
         )
+        try migrate()
         try seedCategories()
     }
 
+    func migrate() throws {
+        try addColumn("category", "counts_as_spending INTEGER NOT NULL DEFAULT 1")
+        try addColumn("counterparty", "default_category_id TEXT")
+        try addColumn("entry", "category_provenance TEXT NOT NULL DEFAULT 'inherited'")
+        try addColumn("entry", "note TEXT")
+        try addColumn("entry", "original_entry_id TEXT")
+        try addColumn("entry", "trashed_on TEXT")
+        try connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS counterparty_alias (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL UNIQUE,
+                counterparty_id TEXT NOT NULL REFERENCES counterparty(id)
+            )
+            """
+        )
+        try connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS import_row (
+                id TEXT PRIMARY KEY NOT NULL,
+                entry_id TEXT,
+                source_timestamp TEXT NOT NULL,
+                amount_cents INTEGER NOT NULL,
+                payee TEXT NOT NULL,
+                source_account TEXT NOT NULL
+            )
+            """
+        )
+        try connection.execute("UPDATE category SET counts_as_spending = 0 WHERE name = 'Savings'")
+        try connection.execute(
+            """
+            UPDATE counterparty
+            SET default_category_id = (
+                SELECT category_id FROM entry
+                WHERE entry.counterparty_id = counterparty.id
+                ORDER BY rowid LIMIT 1
+            )
+            WHERE default_category_id IS NULL
+            """
+        )
+    }
+
+    private func addColumn(_ table: String, _ definition: String) throws {
+        let column = definition.split(separator: " ").first.map(String.init) ?? definition
+        let rows = try connection.query("PRAGMA table_info(\(table))")
+        let names = rows.compactMap { $0.count > 1 ? $0[1].text : nil }
+        if names.contains(column) { return }
+        try connection.execute("ALTER TABLE \(table) ADD COLUMN \(definition)")
+    }
+
     public func record(_ draft: EntryDraft) throws -> Transaction {
+        if draft.kind == .refund, draft.originalPurchaseID != nil {
+            return try recordLinkedRefund(draft)
+        }
         let counterpartyName = draft.counterparty?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var missing: Set<EntryField> = []
         if draft.amount == nil { missing.insert(.amount) }
@@ -89,106 +145,76 @@ public final class Ledger {
         let category = try category(id: categoryID)
         let entryID = UUID()
         try connection.execute("BEGIN")
-        let counterpartyID: UUID
         do {
-            counterpartyID = try findOrCreateCounterparty(named: counterpartyName)
-            try connection.execute(
-                """
-                INSERT INTO entry (
-                    id, amount_cents, kind, counterparty_id, reporting_date, category_id
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                bindings: [
-                    .text(stored(entryID)),
-                    .integer(Int64(amount.value)),
-                    .text(kind.rawValue),
-                    .text(stored(counterpartyID)),
-                    .text(reportingDate.iso8601),
-                    .text(stored(category.id.rawValue)),
-                ]
+            let counterpartyID = try findOrCreateCounterparty(named: counterpartyName, defaultCategory: category.id)
+            let storedCounterparty = try requireCounterparty(id: counterpartyID)
+            let provenance: CategoryProvenance = draft.overridesCategory
+                || storedCounterparty.defaultCategory.id != category.id
+                ? .overridden
+                : .inherited
+            try insertEntry(
+                id: entryID,
+                amount: amount,
+                kind: kind,
+                counterpartyID: counterpartyID,
+                reportingDate: reportingDate,
+                categoryID: category.id,
+                provenance: provenance,
+                note: draft.note,
+                originalPurchaseID: nil
             )
             try connection.execute("COMMIT")
+            return try requireTransaction(id: entryID)
         } catch {
             try? connection.execute("ROLLBACK")
             throw error
         }
+    }
 
-        return Transaction(
-            id: Transaction.ID(rawValue: entryID),
-            amount: amount,
-            kind: kind,
-            counterparty: Counterparty(id: Counterparty.ID(rawValue: counterpartyID), name: counterpartyName),
-            reportingDate: reportingDate,
-            category: category
-        )
+    private func recordLinkedRefund(_ draft: EntryDraft) throws -> Transaction {
+        guard let amount = draft.amount, let reportingDate = draft.reportingDate, let originalID = draft.originalPurchaseID else {
+            throw RecordEntryError.linkedRefundNeedsPurchase
+        }
+        let original = try transaction(id: originalID)
+        guard original.kind == .expense else { throw RecordEntryError.linkedRefundNeedsPurchase }
+        let entryID = UUID()
+        try connection.execute("BEGIN")
+        do {
+            try insertEntry(
+                id: entryID,
+                amount: amount,
+                kind: .refund,
+                counterpartyID: original.counterparty.id.rawValue,
+                reportingDate: reportingDate,
+                categoryID: original.category.id,
+                provenance: .inherited,
+                note: draft.note,
+                originalPurchaseID: original.id.rawValue
+            )
+            try connection.execute("COMMIT")
+            return try requireTransaction(id: entryID)
+        } catch {
+            try? connection.execute("ROLLBACK")
+            throw error
+        }
     }
 
     public func runReport(_ operation: ReportOperation, today: ReportingDate) throws -> ReportResult {
-        switch operation {
-        case .currentMonthSpending:
-            let bounds = monthBounds(containing: today)
-            let rows = try connection.query(
-                """
-                SELECT COALESCE(SUM(amount_cents), 0)
-                FROM entry
-                WHERE kind = ?
-                  AND reporting_date >= ?
-                  AND reporting_date < ?
-                """,
-                bindings: [
-                    .text(Kind.expense.rawValue),
-                    .text(bounds.start),
-                    .text(bounds.end),
-                ]
-            )
-            let total = rows.first?.first?.integer ?? 0
-            return .spendingTotal(Cents(Int(total)))
-        }
+        try performReport(operation, today: today)
     }
 
     public func transactions() throws -> [Transaction] {
         let rows = try connection.query(
             """
-            SELECT
-                entry.id,
-                entry.amount_cents,
-                entry.kind,
-                entry.reporting_date,
-                counterparty.id,
-                counterparty.name,
-                category.id,
-                category.name
-            FROM entry
-            JOIN counterparty ON counterparty.id = entry.counterparty_id
-            JOIN category ON category.id = entry.category_id
+            \(entrySelectSQL)
+            WHERE entry.trashed_on IS NULL
             ORDER BY entry.reporting_date DESC, entry.rowid DESC
             """
         )
-        return try rows.map { row in
-            guard row.count == 8,
-                  let entryID = row[0].text.flatMap(UUID.init(uuidString:)),
-                  let cents = row[1].integer,
-                  let kind = row[2].text.flatMap(Kind.init(rawValue:)),
-                  let reportingDate = row[3].text.flatMap(ReportingDate.init(iso8601:)),
-                  let counterpartyID = row[4].text.flatMap(UUID.init(uuidString:)),
-                  let counterpartyName = row[5].text,
-                  let categoryID = row[6].text.flatMap(UUID.init(uuidString:)),
-                  let categoryName = row[7].text
-            else {
-                throw LedgerError(message: "The ledger returned an entry it could not read.")
-            }
-            return Transaction(
-                id: Transaction.ID(rawValue: entryID),
-                amount: Cents(Int(cents)),
-                kind: kind,
-                counterparty: Counterparty(id: Counterparty.ID(rawValue: counterpartyID), name: counterpartyName),
-                reportingDate: reportingDate,
-                category: Category(id: Category.ID(rawValue: categoryID), name: categoryName)
-            )
-        }
+        return try rows.map(decodeTransaction)
     }
 
-    private func monthBounds(containing today: ReportingDate) -> (start: String, end: String) {
+    func monthBounds(containing today: ReportingDate) -> (start: String, end: String) {
         let start = String(format: "%04d-%02d-01", today.year, today.month)
         let end: String
         if today.month == 12 {
@@ -199,7 +225,26 @@ public final class Ledger {
         return (start, end)
     }
 
-    private func findOrCreateCounterparty(named name: String) throws -> UUID {
+    func findOrCreateCounterparty(named name: String, defaultCategory: Category.ID) throws -> UUID {
+        if let resolved = try resolveCounterpartyID(named: name) {
+            return resolved
+        }
+        let id = UUID()
+        try connection.execute(
+            "INSERT INTO counterparty (id, name, default_category_id) VALUES (?, ?, ?)",
+            bindings: [.text(stored(id)), .text(name), .text(stored(defaultCategory.rawValue))]
+        )
+        return id
+    }
+
+    func resolveCounterpartyID(named name: String) throws -> UUID? {
+        let alias = try connection.query(
+            "SELECT counterparty_id FROM counterparty_alias WHERE name = ?",
+            bindings: [.text(name)]
+        )
+        if let idText = alias.first?.first?.text, let id = UUID(uuidString: idText) {
+            return id
+        }
         let existing = try connection.query(
             "SELECT id FROM counterparty WHERE name = ?",
             bindings: [.text(name)]
@@ -207,36 +252,36 @@ public final class Ledger {
         if let idText = existing.first?.first?.text, let id = UUID(uuidString: idText) {
             return id
         }
-        let id = UUID()
-        try connection.execute(
-            "INSERT INTO counterparty (id, name) VALUES (?, ?)",
-            bindings: [.text(stored(id)), .text(name)]
-        )
-        return id
+        return nil
     }
 
-    private func category(id: Category.ID) throws -> Category {
+    func category(id: Category.ID) throws -> Category {
         let rows = try connection.query(
-            "SELECT name FROM category WHERE id = ?",
+            "SELECT name, counts_as_spending FROM category WHERE id = ?",
             bindings: [.text(stored(id.rawValue))]
         )
-        guard let name = rows.first?.first?.text else {
+        guard let name = rows.first?.first?.text, let spending = rows.first?.dropFirst().first?.integer else {
             throw RecordEntryError.unknownCategory
         }
-        return Category(id: id, name: name)
+        return Category(id: id, name: name, countsAsSpending: spending != 0)
     }
 
-    private func stored(_ id: UUID) -> String {
+    func stored(_ id: UUID) -> String {
         id.uuidString.lowercased()
     }
 
     public func categories() throws -> [Category] {
-        let rows = try connection.query("SELECT id, name FROM category ORDER BY rowid")
+        let rows = try connection.query("SELECT id, name, counts_as_spending FROM category ORDER BY rowid")
         return try rows.map { row in
-            guard row.count == 2, let idText = row[0].text, let name = row[1].text, let id = UUID(uuidString: idText) else {
+            guard row.count == 3,
+                  let idText = row[0].text,
+                  let name = row[1].text,
+                  let id = UUID(uuidString: idText),
+                  let spending = row[2].integer
+            else {
                 throw LedgerError(message: "The ledger returned a category it could not read.")
             }
-            return Category(id: Category.ID(rawValue: id), name: name)
+            return Category(id: Category.ID(rawValue: id), name: name, countsAsSpending: spending != 0)
         }
     }
 
@@ -248,5 +293,6 @@ public final class Ledger {
                 bindings: [.text(UUID().uuidString.lowercased()), .text(name)]
             )
         }
+        try connection.execute("UPDATE category SET counts_as_spending = 0 WHERE name = 'Savings'")
     }
 }

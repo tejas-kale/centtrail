@@ -1,11 +1,16 @@
 import Combine
 import Foundation
+import Interpreter
 import Ledger
 import SwiftUI
 
+extension Notification.Name {
+    static let centtrailNewEntry = Notification.Name("centtrailNewEntry")
+}
+
 @MainActor
 final class CaptureModel: ObservableObject {
-    private let ledger: Ledger
+    let ledger: Ledger
     let today: ReportingDate
 
     @Published var amountText = ""
@@ -15,13 +20,61 @@ final class CaptureModel: ObservableObject {
     @Published var categoryID: LedgerCategoryID?
     @Published var categories: [LedgerCategory] = []
     @Published var transactions: [LedgerTransaction] = []
-    @Published var spending = Cents(0)
+    @Published var spendingCents = 0
     @Published var message: String?
+    @Published var sentence = ""
+    @Published var modelNotice: String?
+    private var applyingPrefill = false
+    private var categoryChosenManually = false
 
     init(ledger: Ledger, today: ReportingDate) throws {
         self.ledger = ledger
         self.today = today
         try reload()
+        NotificationCenter.default.addObserver(forName: .centtrailNewEntry, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.clearDraft()
+            }
+        }
+    }
+
+    func clearDraft() {
+        amountText = ""
+        kind = nil
+        counterparty = ""
+        reportingDateText = ""
+        categoryID = nil
+        sentence = ""
+        categoryChosenManually = false
+        message = nil
+    }
+
+    func prefillCategory() {
+        guard !categoryChosenManually else { return }
+        guard let category = try? ledger.defaultCategory(forCounterpartyName: counterparty) else { return }
+        applyingPrefill = true
+        categoryID = category.id
+        applyingPrefill = false
+    }
+
+    func noteManualCategory() {
+        if !applyingPrefill { categoryChosenManually = true }
+    }
+
+    func applySentence() {
+        let interpreter = Interpreter(ledger: ledger, today: today, modelUnavailableReason: .modelNotReady)
+        modelNotice = "Apple Intelligence is unavailable. The short form stays open, and Centtrail filled what it could from the sentence."
+        guard let parsed = try? interpreter.interpretCapture(sentence) else { return }
+        if let amount = parsed.draft.amount {
+            amountText = String(format: "%d.%02d", amount.value / 100, amount.value % 100)
+        }
+        kind = parsed.draft.kind
+        if let name = parsed.draft.counterparty { counterparty = name }
+        if let date = parsed.draft.reportingDate { reportingDateText = date.iso8601 }
+        applyingPrefill = true
+        categoryID = parsed.draft.categoryID
+        applyingPrefill = false
+        categoryChosenManually = parsed.draft.overridesCategory
     }
 
     static func openDefault() throws -> CaptureModel {
@@ -54,12 +107,7 @@ final class CaptureModel: ObservableObject {
         )
         do {
             _ = try ledger.record(draft)
-            amountText = ""
-            kind = nil
-            counterparty = ""
-            reportingDateText = ""
-            categoryID = nil
-            message = nil
+            clearDraft()
             try reload()
         } catch let error as RecordEntryError {
             message = refusalMessage(error)
@@ -68,12 +116,18 @@ final class CaptureModel: ObservableObject {
         }
     }
 
+    func reloadFromOutside() throws {
+        try reload()
+    }
+
     private func reload() throws {
         categories = try ledger.categories()
         transactions = try ledger.transactions()
         switch try ledger.runReport(.currentMonthSpending, today: today) {
         case .spendingTotal(let cents):
-            spending = cents
+            spendingCents = cents.value
+        default:
+            break
         }
     }
 }
@@ -85,9 +139,19 @@ struct CaptureScreen: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("This month", value: euroLabel(model.spending))
+                    LabeledContent("This month", value: signedEuro(model.spendingCents))
                 } footer: {
                     Text(monthTitle(model.today))
+                }
+
+                Section("Sentence") {
+                    if let modelNotice = model.modelNotice {
+                        Text(modelNotice)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    TextField("20 at Middle Eats yesterday", text: $model.sentence)
+                    Button("Fill draft", action: model.applySentence)
                 }
 
                 Section("New entry") {
@@ -99,8 +163,12 @@ struct CaptureScreen: View {
                         Text("Select").tag(Optional<Kind>.none)
                         Text("Expense").tag(Optional(Kind.expense))
                         Text("Income").tag(Optional(Kind.income))
+                        Text("Refund").tag(Optional(Kind.refund))
+                        Text("Transfer").tag(Optional(Kind.transfer))
+                        Text("Repayment").tag(Optional(Kind.repayment))
                     }
                     TextField("Counterparty", text: $model.counterparty, prompt: Text("Who was paid"))
+                        .onChange(of: model.counterparty) { _, _ in model.prefillCategory() }
                     HStack {
                         TextField("Reporting date", text: $model.reportingDateText, prompt: Text("YYYY-MM-DD"))
                         Button("Today", action: model.useToday)
@@ -111,6 +179,7 @@ struct CaptureScreen: View {
                             Text(category.name).tag(Optional(category.id))
                         }
                     }
+                    .onChange(of: model.categoryID) { _, _ in model.noteManualCategory() }
                     if let message = model.message {
                         Text(message)
                             .foregroundStyle(.red)
@@ -124,7 +193,17 @@ struct CaptureScreen: View {
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(model.transactions) { transaction in
-                            TransactionRow(transaction: transaction)
+                            NavigationLink {
+                                TransactionDetail(transaction: transaction)
+                            } label: {
+                                TransactionRow(transaction: transaction)
+                            }
+                            .swipeActions {
+                                Button("Trash", role: .destructive) {
+                                    try? model.ledger.trash(transaction.id, on: model.today)
+                                    try? model.reloadFromOutside()
+                                }
+                            }
                         }
                     }
                 }
@@ -141,7 +220,18 @@ public struct CaptureRoot: View {
 
     public var body: some View {
         if let model = loader.model {
-            CaptureScreen(model: model)
+            TabView {
+                CaptureScreen(model: model)
+                    .tabItem { Label("Capture", systemImage: "plus") }
+                ReportsScreen(model: model)
+                    .tabItem { Label("Reports", systemImage: "chart.bar") }
+                PeopleScreen(model: model)
+                    .tabItem { Label("People", systemImage: "person.2") }
+                TrashScreen(model: model)
+                    .tabItem { Label("Trash", systemImage: "trash") }
+                ImportScreen(model: model)
+                    .tabItem { Label("Import", systemImage: "square.and.arrow.down") }
+            }
         } else if let failure = loader.failure {
             ContentUnavailableView(
                 "The ledger could not be opened",
@@ -168,7 +258,7 @@ private final class LedgerLoader: ObservableObject {
     }
 }
 
-private struct TransactionRow: View {
+struct TransactionRow: View {
     let transaction: LedgerTransaction
 
     var body: some View {
@@ -181,8 +271,8 @@ private struct TransactionRow: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text(euroLabel(transaction.amount))
-                Text(transaction.kind == .expense ? "Expense" : "Income")
+                Text(signedEuro(transaction.amount.value))
+                Text(transaction.kind.rawValue.capitalized)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -200,13 +290,13 @@ private func civilDate(_ date: Date, calendar: Calendar) -> ReportingDate? {
     return ReportingDate(year: year, month: month, day: day)
 }
 
-private func euroLabel(_ cents: Cents) -> String {
-    let euros = cents.value / 100
-    let remainder = abs(cents.value % 100)
-    return "€\(euros).\(String(format: "%02d", remainder))"
+func signedEuro(_ cents: Int) -> String {
+    let sign = cents < 0 ? "−" : ""
+    let absolute = abs(cents)
+    return "\(sign)€\(absolute / 100).\(String(format: "%02d", absolute % 100))"
 }
 
-private func monthTitle(_ date: ReportingDate) -> String {
+func monthTitle(_ date: ReportingDate) -> String {
     let names = [
         "",
         "January", "February", "March", "April", "May", "June",
@@ -224,6 +314,10 @@ private func refusalMessage(_ error: RecordEntryError) -> String {
         return "Enter \(missing.joined(separator: ", "))."
     case .unknownCategory:
         return "Choose one of the owner's categories."
+    case .unknownEntry:
+        return "That entry could not be found."
+    case .linkedRefundNeedsPurchase:
+        return "Choose the purchase this refund belongs to."
     }
 }
 

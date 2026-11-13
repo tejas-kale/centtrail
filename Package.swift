@@ -10,6 +10,7 @@ let package = Package(
     ],
     products: [
         .library(name: "Ledger", targets: ["Ledger"]),
+        .library(name: "Interpreter", targets: ["Interpreter"]),
         .library(name: "CenttrailShell", targets: ["CenttrailShell"]),
         .executable(name: "Centtrail", targets: ["CenttrailMac"]),
     ],
@@ -21,8 +22,12 @@ let package = Package(
             ]
         ),
         .target(
-            name: "CenttrailShell",
+            name: "Interpreter",
             dependencies: ["Ledger"]
+        ),
+        .target(
+            name: "CenttrailShell",
+            dependencies: ["Ledger", "Interpreter"]
         ),
         .executableTarget(
             name: "CenttrailMac",
@@ -30,7 +35,10 @@ let package = Package(
         ),
         .testTarget(
             name: "LedgerTests",
-            dependencies: ["Ledger"],
+            dependencies: ["Ledger", "Interpreter"],
+            resources: [
+                .copy("Fixtures"),
+            ],
             swiftSettings: [
                 // Swift Build drops TestingMacros for this package unless the
                 // plugin is named on the test target. `swift test` needs it to

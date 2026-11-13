@@ -41,6 +41,14 @@ public struct Cents: Hashable, Sendable {
 public enum Kind: String, Hashable, Sendable {
     case expense
     case income
+    case refund
+    case transfer
+    case repayment
+}
+
+public enum CategoryProvenance: String, Hashable, Sendable {
+    case inherited
+    case overridden
 }
 
 public struct ReportingDate: Hashable, Sendable {
@@ -76,6 +84,45 @@ public struct ReportingDate: Hashable, Sendable {
         String(format: "%04d-%02d-%02d", year, month, day)
     }
 
+    public static func dayCount(month: Int, year: Int) -> Int {
+        days(in: month, year: year)
+    }
+
+    public func addingDays(_ days: Int) -> ReportingDate? {
+        let shifted = julianDay + days
+        return ReportingDate(julianDay: shifted)
+    }
+
+    public func wholeDays(until other: ReportingDate) -> Int {
+        other.julianDay - julianDay
+    }
+
+    private var julianDay: Int {
+        let a = (14 - month) / 12
+        let y = year + 4800 - a
+        let m = month + 12 * a - 3
+        return day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045
+    }
+
+    private init?(julianDay value: Int) {
+        let j = value + 32044
+        let g = j / 146097
+        let dg = j % 146097
+        let c = (dg / 36524 + 1) * 3 / 4
+        let dc = dg - c * 36524
+        let b = dc / 1461
+        let db = dc % 1461
+        let a = (db / 365 + 1) * 3 / 4
+        let da = db - a * 365
+        let y = g * 400 + c * 100 + b * 4 + a
+        let m = (da * 5 + 308) / 153 - 2
+        let d = da - (m + 4) * 153 / 5 + 122
+        let year = y - 4800 + (m + 2) / 12
+        let month = (m + 2) % 12 + 1
+        let day = d + 1
+        self.init(year: year, month: month, day: day)
+    }
+
     private static func days(in month: Int, year: Int) -> Int {
         switch month {
         case 1, 3, 5, 7, 8, 10, 12:
@@ -97,6 +144,7 @@ public struct ReportingDate: Hashable, Sendable {
 public struct Counterparty: Hashable, Sendable, Identifiable {
     public let id: ID
     public let name: String
+    public let defaultCategory: Category
 
     public struct ID: Hashable, Sendable {
         public let rawValue: UUID
@@ -106,9 +154,10 @@ public struct Counterparty: Hashable, Sendable, Identifiable {
         }
     }
 
-    public init(id: ID, name: String) {
+    public init(id: ID, name: String, defaultCategory: Category) {
         self.id = id
         self.name = name
+        self.defaultCategory = defaultCategory
     }
 }
 
@@ -119,6 +168,9 @@ public struct Transaction: Hashable, Sendable, Identifiable {
     public let counterparty: Counterparty
     public let reportingDate: ReportingDate
     public let category: Category
+    public let categoryProvenance: CategoryProvenance
+    public let note: String?
+    public let originalPurchaseID: ID?
 
     public struct ID: Hashable, Sendable {
         public let rawValue: UUID
@@ -134,7 +186,10 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         kind: Kind,
         counterparty: Counterparty,
         reportingDate: ReportingDate,
-        category: Category
+        category: Category,
+        categoryProvenance: CategoryProvenance = .inherited,
+        note: String? = nil,
+        originalPurchaseID: ID? = nil
     ) {
         self.id = id
         self.amount = amount
@@ -142,6 +197,9 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         self.counterparty = counterparty
         self.reportingDate = reportingDate
         self.category = category
+        self.categoryProvenance = categoryProvenance
+        self.note = note
+        self.originalPurchaseID = originalPurchaseID
     }
 }
 
@@ -153,17 +211,136 @@ public enum EntryField: String, Hashable, Sendable {
     case category
 }
 
+public struct SignedCents: Hashable, Sendable {
+    public let value: Int
+
+    public init(_ value: Int) {
+        self.value = value
+    }
+}
+
+public struct DateRange: Hashable, Sendable {
+    public let start: ReportingDate
+    public let end: ReportingDate
+
+    public init(start: ReportingDate, end: ReportingDate) {
+        self.start = start
+        self.end = end
+    }
+}
+
+public enum Measure: Hashable, Sendable {
+    case spending
+    case income
+}
+
+public enum AmountCondition: Hashable, Sendable {
+    case equal(Cents)
+    case greaterThan(Cents)
+    case lessThan(Cents)
+    case atLeast(Cents)
+    case atMost(Cents)
+}
+
+public enum Grouping: Hashable, Sendable {
+    case month
+    case category
+    case monthAndCategory
+}
+
+public struct ReportQuery: Hashable, Sendable {
+    public var measure: Measure
+    public var range: DateRange?
+    public var categoryID: Category.ID?
+    public var counterpartyName: String?
+    public var amount: AmountCondition?
+    public var grouping: Grouping?
+
+    public init(
+        measure: Measure,
+        range: DateRange? = nil,
+        categoryID: Category.ID? = nil,
+        counterpartyName: String? = nil,
+        amount: AmountCondition? = nil,
+        grouping: Grouping? = nil
+    ) {
+        self.measure = measure
+        self.range = range
+        self.categoryID = categoryID
+        self.counterpartyName = counterpartyName
+        self.amount = amount
+        self.grouping = grouping
+    }
+}
+
 public enum ReportOperation: Hashable, Sendable {
     case currentMonthSpending
+    case currentMonthIncome
+    case total(ReportQuery)
+    case breakdown(ReportQuery)
+    case comparison(measure: Measure, categoryID: Category.ID?, counterpartyName: String?)
+    case search(ReportQuery)
+}
+
+public struct BreakdownRow: Hashable, Sendable, Identifiable {
+    public var id: String { "\(month ?? "")|\(categoryName ?? "")" }
+    public let month: String?
+    public let categoryName: String?
+    public let cents: Int
+
+    public init(month: String?, categoryName: String?, cents: Int) {
+        self.month = month
+        self.categoryName = categoryName
+        self.cents = cents
+    }
+}
+
+public struct PeriodAmount: Hashable, Sendable {
+    public let range: DateRange
+    public let cents: Int
+
+    public init(range: DateRange, cents: Int) {
+        self.range = range
+        self.cents = cents
+    }
+}
+
+public struct ComparisonResult: Hashable, Sendable {
+    public let earlier: PeriodAmount
+    public let later: PeriodAmount
+    public let absoluteChangeCents: Int
+    public let percentageChange: Double?
+    public let unequalLengths: Bool
+
+    public init(
+        earlier: PeriodAmount,
+        later: PeriodAmount,
+        absoluteChangeCents: Int,
+        percentageChange: Double?,
+        unequalLengths: Bool
+    ) {
+        self.earlier = earlier
+        self.later = later
+        self.absoluteChangeCents = absoluteChangeCents
+        self.percentageChange = percentageChange
+        self.unequalLengths = unequalLengths
+    }
 }
 
 public enum ReportResult: Hashable, Sendable {
-    case spendingTotal(Cents)
+    case spendingTotal(SignedCents)
+    case incomeTotal(SignedCents)
+    case total(cents: Int, range: DateRange)
+    case breakdown([BreakdownRow], range: DateRange)
+    case comparison(ComparisonResult)
+    case transactions([Transaction])
 }
 
 public enum RecordEntryError: Error, Equatable {
     case incomplete(Set<EntryField>)
     case unknownCategory
+    case unknownEntry
+    case linkedRefundNeedsPurchase
 }
 
 public struct EntryDraft: Equatable, Sendable {
@@ -178,12 +355,22 @@ public struct EntryDraft: Equatable, Sendable {
         kind: Kind? = nil,
         counterparty: String? = nil,
         reportingDate: ReportingDate? = nil,
-        categoryID: Category.ID? = nil
+        categoryID: Category.ID? = nil,
+        overridesCategory: Bool = false,
+        note: String? = nil,
+        originalPurchaseID: Transaction.ID? = nil
     ) {
         self.amount = amount
         self.kind = kind
         self.counterparty = counterparty
         self.reportingDate = reportingDate
         self.categoryID = categoryID
+        self.overridesCategory = overridesCategory
+        self.note = note
+        self.originalPurchaseID = originalPurchaseID
     }
+
+    public var overridesCategory: Bool
+    public var note: String?
+    public var originalPurchaseID: Transaction.ID?
 }

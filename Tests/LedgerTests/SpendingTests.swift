@@ -13,7 +13,7 @@ import Testing
     let result = try ledger.runReport(.currentMonthSpending, today: today)
 
     // 1250 + 3400. February, April, and the March salary are outside this total.
-    #expect(result == .spendingTotal(Cents(4650)))
+    #expect(result == .spendingTotal(SignedCents(4650)))
 }
 
 private func record(
