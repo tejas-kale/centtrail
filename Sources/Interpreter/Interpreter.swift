@@ -63,24 +63,24 @@ public struct Interpreter {
             return .clarification(kept.map(\.name).sorted())
         }
         let categoryID = kept.first { $0.kind == .category }?.categoryID
-        let counterpartyName = kept.first { $0.kind == .counterparty }?.name
+        let payeeName = kept.first { $0.kind == .payee }?.name
         let measure: Measure = lower.contains("income") || lower.contains("earned") ? .income : .spending
 
         if lower.contains("vs") || lower.contains("versus") || lower.contains("compared") {
-            return .operation(.comparison(measure: measure, categoryID: categoryID, counterpartyName: counterpartyName))
+            return .operation(.comparison(measure: measure, categoryID: categoryID, payeeName: payeeName))
         }
         if lower.contains("by category") || lower.contains("over month") || lower.contains("each month") || lower.contains("breakdown") {
             let grouping: Grouping = (lower.contains("over month") || lower.contains("each month")) && lower.contains("by category")
                 ? .monthAndCategory
                 : (lower.contains("over month") || lower.contains("each month") ? .month : .category)
-            return .operation(.breakdown(ReportQuery(measure: measure, categoryID: categoryID, counterpartyName: counterpartyName, grouping: grouping)))
+            return .operation(.breakdown(ReportQuery(measure: measure, categoryID: categoryID, payeeName: payeeName, grouping: grouping)))
         }
         if lower.contains("find") || lower.contains("search") || lower.contains("exactly")
             || lower.contains("over ") || lower.contains("under ") || lower.contains("more than") || lower.contains("less than") {
-            return .operation(.search(searchQuery(lower, categoryID: categoryID, counterpartyName: counterpartyName)))
+            return .operation(.search(searchQuery(lower, categoryID: categoryID, payeeName: payeeName)))
         }
         if lower.contains("how much") || lower.contains("total") || lower.contains("spend") || lower.contains("spent") || lower.contains("income") {
-            return .operation(.total(ReportQuery(measure: measure, categoryID: categoryID, counterpartyName: counterpartyName)))
+            return .operation(.total(ReportQuery(measure: measure, categoryID: categoryID, payeeName: payeeName)))
         }
         return .unsupported(Self.supportedExplanation)
     }
@@ -109,14 +109,14 @@ public struct Interpreter {
         let lower = trimmed.lowercased()
         let kind: Kind = lower.contains("income") || lower.contains("from ") ? .income : .expense
         let amount = firstAmount(in: trimmed)
-        let name = captureCounterparty(in: trimmed)
+        let name = capturePayee(in: trimmed)
         let date = captureDate(in: lower)
-        let category = try categoryMentioned(in: lower) ?? (name.flatMap { try? ledger.defaultCategory(forCounterpartyName: $0) })
+        let category = try categoryMentioned(in: lower) ?? (name.flatMap { try? ledger.defaultCategory(forPayeeName: $0) })
         let overrides = (try? categoryMentioned(in: lower)) != nil
         return EntryDraft(
             amount: amount,
             kind: kind,
-            counterparty: name,
+            payee: name,
             reportingDate: date,
             categoryID: category?.id,
             overridesCategory: overrides && category != nil
@@ -137,7 +137,7 @@ public struct Interpreter {
         return Cents(euroText: number)
     }
 
-    private func captureCounterparty(in text: String) -> String? {
+    private func capturePayee(in text: String) -> String? {
         let lower = text.lowercased()
         if let range = lower.range(of: " at ") {
             return tailName(text[range.upperBound...])
@@ -179,22 +179,22 @@ public struct Interpreter {
         var categoryID: Category.ID?
     }
 
-    private enum NameKind { case category, counterparty }
+    private enum NameKind { case category, payee }
 
     private func knownNames() throws -> [KnownName] {
         var names = try ledger.categories().map {
             KnownName(name: $0.name, kind: .category, categoryID: $0.id)
         }
-        for counterparty in try ledger.counterparties() {
-            names.append(KnownName(name: counterparty.name, kind: .counterparty, categoryID: nil))
+        for payee in try ledger.payees() {
+            names.append(KnownName(name: payee.name, kind: .payee, categoryID: nil))
         }
         for alias in try ledger.confirmedAliases() {
-            names.append(KnownName(name: alias.name, kind: .counterparty, categoryID: nil))
+            names.append(KnownName(name: alias.name, kind: .payee, categoryID: nil))
         }
         return names
     }
 
-    private func searchQuery(_ lower: String, categoryID: Category.ID?, counterpartyName: String?) -> ReportQuery {
+    private func searchQuery(_ lower: String, categoryID: Category.ID?, payeeName: String?) -> ReportQuery {
         var amount: AmountCondition?
         if let cents = euroCondition(in: lower) {
             if lower.contains("over") || lower.contains("more than") || lower.contains("greater than") {
@@ -205,7 +205,7 @@ public struct Interpreter {
                 amount = .equal(cents)
             }
         }
-        return ReportQuery(measure: .spending, categoryID: categoryID, counterpartyName: counterpartyName, amount: amount)
+        return ReportQuery(measure: .spending, categoryID: categoryID, payeeName: payeeName, amount: amount)
     }
 
     private func euroCondition(in lower: String) -> Cents? {
@@ -223,7 +223,7 @@ public struct Interpreter {
             var mismatches: [String] = []
             if actualMeasure != expectedMeasure { mismatches.append("measure") }
             if actualCategory != expectedCategory { mismatches.append("category") }
-            if actualName != expectedName { mismatches.append("counterparty") }
+            if actualName != expectedName { mismatches.append("payee") }
             return InterpretationScore(operationMatches: true, argumentMismatches: mismatches)
         case (.currentMonthSpending, .currentMonthSpending), (.currentMonthIncome, .currentMonthIncome):
             return InterpretationScore(operationMatches: true, argumentMismatches: [])
@@ -237,7 +237,7 @@ public struct Interpreter {
         if actual.measure != expected.measure { mismatches.append("measure") }
         if actual.range != expected.range { mismatches.append("range") }
         if actual.categoryID != expected.categoryID { mismatches.append("category") }
-        if actual.counterpartyName != expected.counterpartyName { mismatches.append("counterparty") }
+        if actual.payeeName != expected.payeeName { mismatches.append("payee") }
         if actual.amount != expected.amount { mismatches.append("amount") }
         if actual.grouping != expected.grouping { mismatches.append("grouping") }
         return InterpretationScore(operationMatches: operationMatches, argumentMismatches: mismatches)

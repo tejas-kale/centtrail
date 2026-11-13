@@ -11,7 +11,7 @@ import Testing
         try ledger.record(
             EntryDraft(
                 kind: .expense,
-                counterparty: "REWE",
+                payee: "REWE",
                 reportingDate: reportingDate,
                 categoryID: supermarket.id
             )
@@ -29,7 +29,7 @@ import Testing
         try ledger.record(
             EntryDraft(
                 amount: Cents(1250),
-                counterparty: "REWE",
+                payee: "REWE",
                 reportingDate: reportingDate,
                 categoryID: supermarket.id
             )
@@ -38,12 +38,12 @@ import Testing
     #expect(try ledger.transactions().isEmpty)
 }
 
-@Test func savingIsRefusedWhenTheCounterpartyIsMissing() throws {
+@Test func savingIsRefusedWhenThePayeeIsMissing() throws {
     let ledger = try Ledger.openInMemory()
     let supermarket = try #require(try ledger.categories().first { $0.name == "Supermarket" })
     let reportingDate = try #require(ReportingDate(iso8601: "2026-11-02"))
 
-    #expect(throws: RecordEntryError.incomplete([.counterparty])) {
+    #expect(throws: RecordEntryError.incomplete([.payee])) {
         try ledger.record(
             EntryDraft(
                 amount: Cents(1250),
@@ -56,17 +56,17 @@ import Testing
     #expect(try ledger.transactions().isEmpty)
 }
 
-@Test func savingIsRefusedWhenTheCounterpartyIsBlank() throws {
+@Test func savingIsRefusedWhenThePayeeIsBlank() throws {
     let ledger = try Ledger.openInMemory()
     let supermarket = try #require(try ledger.categories().first { $0.name == "Supermarket" })
     let reportingDate = try #require(ReportingDate(iso8601: "2026-11-02"))
 
-    #expect(throws: RecordEntryError.incomplete([.counterparty])) {
+    #expect(throws: RecordEntryError.incomplete([.payee])) {
         try ledger.record(
             EntryDraft(
                 amount: Cents(1250),
                 kind: .expense,
-                counterparty: " \n\t ",
+                payee: " \n\t ",
                 reportingDate: reportingDate,
                 categoryID: supermarket.id
             )
@@ -84,7 +84,7 @@ import Testing
             EntryDraft(
                 amount: Cents(1250),
                 kind: .expense,
-                counterparty: "REWE",
+                payee: "REWE",
                 categoryID: supermarket.id
             )
         )
@@ -101,7 +101,7 @@ import Testing
             EntryDraft(
                 amount: Cents(1250),
                 kind: .expense,
-                counterparty: "REWE",
+                payee: "REWE",
                 reportingDate: reportingDate
             )
         )
@@ -118,7 +118,7 @@ import Testing
             EntryDraft(
                 amount: Cents(1250),
                 kind: .expense,
-                counterparty: "REWE",
+                payee: "REWE",
                 reportingDate: reportingDate,
                 categoryID: Category.ID(rawValue: UUID())
             )
@@ -133,7 +133,7 @@ import Testing
     #expect(throws: RecordEntryError.incomplete([
         .amount,
         .kind,
-        .counterparty,
+        .payee,
         .reportingDate,
         .category,
     ])) {

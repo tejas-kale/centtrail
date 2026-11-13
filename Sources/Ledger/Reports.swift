@@ -23,7 +23,7 @@ extension Ledger {
                 end: bounds.end,
                 endIsExclusive: true,
                 categoryID: nil,
-                counterpartyName: nil,
+                payeeName: nil,
                 amount: nil
             )
             return .spendingTotal(SignedCents(total))
@@ -35,7 +35,7 @@ extension Ledger {
                 end: bounds.end,
                 endIsExclusive: true,
                 categoryID: nil,
-                counterpartyName: nil,
+                payeeName: nil,
                 amount: nil
             )
             return .incomeTotal(SignedCents(total))
@@ -46,8 +46,8 @@ extension Ledger {
         case .breakdown(let query):
             let range = resolvedRange(query.range, today: today)
             return .breakdown(try breakdown(query, range: range), range: range)
-        case .comparison(let measure, let categoryID, let counterpartyName):
-            return .comparison(try comparison(today: today, measure: measure, categoryID: categoryID, counterpartyName: counterpartyName))
+        case .comparison(let measure, let categoryID, let payeeName):
+            return .comparison(try comparison(today: today, measure: measure, categoryID: categoryID, payeeName: payeeName))
         case .search(let query):
             return .transactions(try matchingTransactions(query, today: today))
         }
@@ -75,7 +75,7 @@ extension Ledger {
             end: range.end.iso8601,
             endIsExclusive: false,
             categoryID: query.categoryID,
-            counterpartyName: query.counterpartyName,
+            payeeName: query.payeeName,
             amount: query.amount
         )
     }
@@ -86,7 +86,7 @@ extension Ledger {
         end: String,
         endIsExclusive: Bool,
         categoryID: Category.ID?,
-        counterpartyName: String?,
+        payeeName: String?,
         amount: AmountCondition?
     ) throws -> Int {
         var sql = """
@@ -97,7 +97,7 @@ extension Ledger {
           AND entry.reporting_date \(endIsExclusive ? "<" : "<=") ?
         """
         var bindings: [SQLiteValue] = [.text(start), .text(end)]
-        appendFilters(&sql, bindings: &bindings, categoryID: categoryID, counterpartyName: counterpartyName, amount: amount)
+        appendFilters(&sql, bindings: &bindings, categoryID: categoryID, payeeName: payeeName, amount: amount)
         let rows = try connection.query(sql, bindings: bindings)
         return Int(rows.first?.first?.integer ?? 0)
     }
@@ -125,7 +125,7 @@ extension Ledger {
           AND entry.reporting_date <= ?
         """
         var bindings: [SQLiteValue] = [.text(range.start.iso8601), .text(range.end.iso8601)]
-        appendFilters(&sql, bindings: &bindings, categoryID: query.categoryID, counterpartyName: query.counterpartyName, amount: query.amount)
+        appendFilters(&sql, bindings: &bindings, categoryID: query.categoryID, payeeName: query.payeeName, amount: query.amount)
         sql += " GROUP BY \(group) ORDER BY 1, 2"
         let rows = try connection.query(sql, bindings: bindings)
         var grouped = rows.compactMap { row -> BreakdownRow? in
@@ -149,7 +149,7 @@ extension Ledger {
         today: ReportingDate,
         measure: Measure,
         categoryID: Category.ID?,
-        counterpartyName: String?
+        payeeName: String?
     ) throws -> ComparisonResult {
         let laterStart = ReportingDate(year: today.year, month: today.month, day: 1)!
         var earlierYear = today.year
@@ -164,7 +164,7 @@ extension Ledger {
         let earlierEnd = ReportingDate(year: earlierYear, month: earlierMonth, day: earlierEndDay)!
         let earlierRange = DateRange(start: earlierStart, end: earlierEnd)
         let laterRange = DateRange(start: laterStart, end: today)
-        let query = ReportQuery(measure: measure, categoryID: categoryID, counterpartyName: counterpartyName)
+        let query = ReportQuery(measure: measure, categoryID: categoryID, payeeName: payeeName)
         let earlierCents = try sum(query: query, range: earlierRange)
         let laterCents = try sum(query: query, range: laterRange)
         let change = laterCents - earlierCents
@@ -190,7 +190,7 @@ extension Ledger {
             bindings.append(.text(range.end.iso8601))
         }
         _ = today
-        appendFilters(&sql, bindings: &bindings, categoryID: query.categoryID, counterpartyName: query.counterpartyName, amount: query.amount)
+        appendFilters(&sql, bindings: &bindings, categoryID: query.categoryID, payeeName: query.payeeName, amount: query.amount)
         sql += " ORDER BY entry.reporting_date DESC, entry.rowid DESC"
         return try connection.query(sql, bindings: bindings).map(decodeTransaction)
     }
@@ -207,15 +207,15 @@ extension Ledger {
         _ sql: inout String,
         bindings: inout [SQLiteValue],
         categoryID: Category.ID?,
-        counterpartyName: String?,
+        payeeName: String?,
         amount: AmountCondition?
     ) {
         if let categoryID {
             sql += " AND entry.category_id = ?"
             bindings.append(.text(stored(categoryID.rawValue)))
         }
-        if let counterpartyName {
-            let trimmed = counterpartyName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let payeeName {
+            let trimmed = payeeName.trimmingCharacters(in: .whitespacesAndNewlines)
             sql += """
              AND (
                 counterparty.name = ?

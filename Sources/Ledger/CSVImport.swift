@@ -55,14 +55,14 @@ public enum UncertainDecision: Equatable, Sendable {
 }
 
 public struct ProposedPayeeDefault: Equatable, Sendable, Identifiable {
-    public let counterpartyID: Counterparty.ID
+    public let payeeID: Payee.ID
     public let payee: String
     public let categoryName: String
 
-    public var id: Counterparty.ID { counterpartyID }
+    public var id: Payee.ID { payeeID }
 
-    public init(counterpartyID: Counterparty.ID, payee: String, categoryName: String) {
-        self.counterpartyID = counterpartyID
+    public init(payeeID: Payee.ID, payee: String, categoryName: String) {
+        self.payeeID = payeeID
         self.payee = payee
         self.categoryName = categoryName
     }
@@ -99,9 +99,9 @@ extension Ledger {
         }
         for payee in acceptedPayees {
             let name = payee.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let id = try resolveCounterpartyID(named: name) else { continue }
+            guard let id = try resolvePayeeID(named: name) else { continue }
             if try proposedCategoryID(for: id) != nil {
-                try acceptProposedPayeeDefault(for: Counterparty.ID(rawValue: id))
+                try acceptProposedPayeeDefault(for: Payee.ID(rawValue: id))
             }
         }
         return ImportCommitResult(importedCount: imported)
@@ -188,7 +188,7 @@ extension Ledger {
             let draft = EntryDraft(
                 amount: Cents(parsedAmount.cents),
                 kind: kind,
-                counterparty: payee,
+                payee: payee,
                 reportingDate: fingerprint.reportingDate,
                 categoryID: category!.id,
                 note: fingerprint.note
@@ -265,7 +265,7 @@ extension Ledger {
     private func proposedDefaultName(payee: String, categoryName: String, earlierInFile: [ClassifiedImport]) throws -> String? {
         guard !payee.isEmpty, !categoryName.isEmpty else { return nil }
         if earlierInFile.contains(where: { $0.fingerprint?.payee == payee }) { return nil }
-        if try resolveCounterpartyID(named: payee) != nil { return nil }
+        if try resolvePayeeID(named: payee) != nil { return nil }
         return categoryName
     }
 
@@ -287,15 +287,15 @@ extension Ledger {
             else {
                 throw LedgerError(message: "The ledger returned a proposed default it could not read.")
             }
-            return ProposedPayeeDefault(counterpartyID: Counterparty.ID(rawValue: id), payee: payee, categoryName: categoryName)
+            return ProposedPayeeDefault(payeeID: Payee.ID(rawValue: id), payee: payee, categoryName: categoryName)
         }
     }
 
-    public func acceptProposedPayeeDefault(for counterpartyID: Counterparty.ID) throws {
-        guard let categoryID = try proposedCategoryID(for: counterpartyID.rawValue) else {
+    public func acceptProposedPayeeDefault(for payeeID: Payee.ID) throws {
+        guard let categoryID = try proposedCategoryID(for: payeeID.rawValue) else {
             throw LedgerError(message: "That payee has no proposed default.")
         }
-        try setDefaultCategory(categoryID, for: counterpartyID)
+        try setDefaultCategory(categoryID, for: payeeID)
     }
 
     private func commit(_ item: ClassifiedImport) throws {
