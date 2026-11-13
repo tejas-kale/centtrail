@@ -4,10 +4,10 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A confirmed alias resolves to its counterparty in capture
-- [ ] Names are never merged without the owner's explicit confirmation
-- [ ] An income entry with a payer pre-fills the payer's default category (e.g. employer → Salary)
-- [ ] Payer overrides and default changes behave exactly as for vendors
-- [ ] Income totals are reported separately from spending
+- [x] A confirmed alias resolves to its counterparty in capture
+- [x] Names are never merged without the owner's explicit confirmation
+- [x] An income entry with a payer pre-fills the payer's default category (e.g. employer → Salary)
+- [x] Payer overrides and default changes behave exactly as for vendors
+- [x] Income totals are reported separately from spending
