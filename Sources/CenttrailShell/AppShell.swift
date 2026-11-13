@@ -10,7 +10,7 @@ struct TransactionDetail: View {
         Form {
             LabeledContent("Amount", value: signedEuro(transaction.amount.value))
             LabeledContent("Kind", value: transaction.kind.rawValue.capitalized)
-            LabeledContent("Counterparty", value: transaction.counterparty.name)
+            LabeledContent("Payee", value: transaction.payee.name)
             LabeledContent("Category", value: transaction.category.name)
             LabeledContent("Provenance", value: transaction.categoryProvenance.rawValue.capitalized)
             LabeledContent("Reporting date", value: transaction.reportingDate.iso8601)
@@ -22,7 +22,7 @@ struct TransactionDetail: View {
                     NavigationLink {
                         TransactionDetail(transaction: purchase, ledger: ledger)
                     } label: {
-                        Text("\(purchase.counterparty.name) · \(signedEuro(purchase.amount.value)) · \(purchase.reportingDate.iso8601)")
+                        Text("\(purchase.payee.name) · \(signedEuro(purchase.amount.value)) · \(purchase.reportingDate.iso8601)")
                     }
                 }
             }
@@ -38,7 +38,7 @@ struct TransactionDetail: View {
                 }
             }
         }
-        .navigationTitle(transaction.counterparty.name)
+        .navigationTitle(transaction.payee.name)
     }
 
     private var originalPurchase: LedgerTransaction? {
@@ -118,7 +118,7 @@ struct ReportsScreen: View {
                     }
                 }
                 Section("Search") {
-                    TextField("Vendor", text: $searchName)
+                    TextField("Payee", text: $searchName)
                     TextField("Over euros", text: $searchAmount)
                     Picker("Category", selection: $searchCategoryID) {
                         Text("Any").tag(Optional<LedgerCategoryID>.none)
@@ -181,7 +181,7 @@ struct ReportsScreen: View {
     }
 
     private func showComparison() {
-        guard let result = try? model.ledger.runReport(.comparison(measure: .spending, categoryID: nil, counterpartyName: nil), today: model.today) else { return }
+        guard let result = try? model.ledger.runReport(.comparison(measure: .spending, categoryID: nil, payeeName: nil), today: model.today) else { return }
         present(result)
     }
 
@@ -204,7 +204,7 @@ struct ReportsScreen: View {
             measure: .spending,
             range: range,
             categoryID: searchCategoryID,
-            counterpartyName: searchName.isEmpty ? nil : searchName,
+            payeeName: searchName.isEmpty ? nil : searchName,
             amount: amount
         )
         guard case .transactions(let found)? = try? model.ledger.runReport(.search(query), today: model.today) else { return }
@@ -271,14 +271,14 @@ struct ReportsScreen: View {
 
 struct PeopleScreen: View {
     @ObservedObject var model: CaptureModel
-    @State private var people: [Counterparty] = []
+    @State private var people: [Payee] = []
     @State private var aliasName = ""
-    @State private var aliasTarget: Counterparty.ID?
+    @State private var aliasTarget: Payee.ID?
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Counterparties") {
+                Section("Payees") {
                     ForEach(people) { person in
                         Picker(person.name, selection: binding(for: person)) {
                             Text("None").tag(Optional<LedgerCategoryID>.none)
@@ -290,8 +290,8 @@ struct PeopleScreen: View {
                 }
                 Section("Alias") {
                     TextField("AMZN MKTP", text: $aliasName)
-                    Picker("Counterparty", selection: $aliasTarget) {
-                        Text("Select").tag(Optional<Counterparty.ID>.none)
+                    Picker("Payee", selection: $aliasTarget) {
+                        Text("Select").tag(Optional<Payee.ID>.none)
                         ForEach(people) { person in
                             Text(person.name).tag(Optional(person.id))
                         }
@@ -304,7 +304,7 @@ struct PeopleScreen: View {
         }
     }
 
-    private func binding(for person: Counterparty) -> Binding<LedgerCategoryID?> {
+    private func binding(for person: Payee) -> Binding<LedgerCategoryID?> {
         Binding(
             get: { person.defaultCategory?.id },
             set: { newValue in
@@ -324,7 +324,7 @@ struct PeopleScreen: View {
     }
 
     private func reload() {
-        people = (try? model.ledger.counterparties()) ?? []
+        people = (try? model.ledger.payees()) ?? []
         try? model.reloadFromOutside()
     }
 }
@@ -338,7 +338,7 @@ struct TrashScreen: View {
             List {
                 ForEach(entries) { entry in
                     VStack(alignment: .leading) {
-                        Text(entry.transaction.counterparty.name)
+                        Text(entry.transaction.payee.name)
                         Text("\(entry.daysRemaining) days remaining")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -445,7 +445,7 @@ struct ImportScreen: View {
     }
 
     private func accept(_ proposal: ProposedPayeeDefault) {
-        try? model.ledger.acceptProposedPayeeDefault(for: proposal.counterpartyID)
+        try? model.ledger.acceptProposedPayeeDefault(for: proposal.payeeID)
         try? model.reloadFromOutside()
         preview()
     }

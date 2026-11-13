@@ -141,7 +141,7 @@ public struct ReportingDate: Hashable, Sendable {
     }
 }
 
-public struct Counterparty: Hashable, Sendable, Identifiable {
+public struct Payee: Hashable, Sendable, Identifiable {
     public let id: ID
     public let name: String
     public let defaultCategory: Category?
@@ -165,7 +165,7 @@ public struct Transaction: Hashable, Sendable, Identifiable {
     public let id: ID
     public let amount: Cents
     public let kind: Kind
-    public let counterparty: Counterparty
+    public let payee: Payee
     public let reportingDate: ReportingDate
     public let category: Category
     public let categoryProvenance: CategoryProvenance
@@ -184,7 +184,7 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         id: ID,
         amount: Cents,
         kind: Kind,
-        counterparty: Counterparty,
+        payee: Payee,
         reportingDate: ReportingDate,
         category: Category,
         categoryProvenance: CategoryProvenance = .inherited,
@@ -194,7 +194,7 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         self.id = id
         self.amount = amount
         self.kind = kind
-        self.counterparty = counterparty
+        self.payee = payee
         self.reportingDate = reportingDate
         self.category = category
         self.categoryProvenance = categoryProvenance
@@ -206,7 +206,7 @@ public struct Transaction: Hashable, Sendable, Identifiable {
 public enum EntryField: String, Hashable, Sendable {
     case amount
     case kind
-    case counterparty
+    case payee
     case reportingDate
     case category
 }
@@ -252,7 +252,7 @@ public struct ReportQuery: Hashable, Sendable {
     public var measure: Measure
     public var range: DateRange?
     public var categoryID: Category.ID?
-    public var counterpartyName: String?
+    public var payeeName: String?
     public var amount: AmountCondition?
     public var grouping: Grouping?
 
@@ -260,14 +260,14 @@ public struct ReportQuery: Hashable, Sendable {
         measure: Measure,
         range: DateRange? = nil,
         categoryID: Category.ID? = nil,
-        counterpartyName: String? = nil,
+        payeeName: String? = nil,
         amount: AmountCondition? = nil,
         grouping: Grouping? = nil
     ) {
         self.measure = measure
         self.range = range
         self.categoryID = categoryID
-        self.counterpartyName = counterpartyName
+        self.payeeName = payeeName
         self.amount = amount
         self.grouping = grouping
     }
@@ -278,7 +278,7 @@ public enum ReportOperation: Hashable, Sendable {
     case currentMonthIncome
     case total(ReportQuery)
     case breakdown(ReportQuery)
-    case comparison(measure: Measure, categoryID: Category.ID?, counterpartyName: String?)
+    case comparison(measure: Measure, categoryID: Category.ID?, payeeName: String?)
     case search(ReportQuery)
 }
 
@@ -346,14 +346,14 @@ public enum RecordEntryError: Error, Equatable {
 public struct EntryDraft: Equatable, Sendable {
     public var amount: Cents?
     public var kind: Kind?
-    public var counterparty: String?
+    public var payee: String?
     public var reportingDate: ReportingDate?
     public var categoryID: Category.ID?
 
     public init(
         amount: Cents? = nil,
         kind: Kind? = nil,
-        counterparty: String? = nil,
+        payee: String? = nil,
         reportingDate: ReportingDate? = nil,
         categoryID: Category.ID? = nil,
         overridesCategory: Bool = false,
@@ -362,7 +362,7 @@ public struct EntryDraft: Equatable, Sendable {
     ) {
         self.amount = amount
         self.kind = kind
-        self.counterparty = counterparty
+        self.payee = payee
         self.reportingDate = reportingDate
         self.categoryID = categoryID
         self.overridesCategory = overridesCategory

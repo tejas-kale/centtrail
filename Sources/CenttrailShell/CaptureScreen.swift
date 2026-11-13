@@ -15,7 +15,7 @@ final class CaptureModel: ObservableObject {
 
     @Published var amountText = ""
     @Published var kind: Kind?
-    @Published var counterparty = ""
+    @Published var payee = ""
     @Published var reportingDateText = ""
     @Published var categoryID: LedgerCategoryID?
     @Published var originalPurchaseID: LedgerTransaction.ID?
@@ -42,7 +42,7 @@ final class CaptureModel: ObservableObject {
     func clearDraft() {
         amountText = ""
         kind = nil
-        counterparty = ""
+        payee = ""
         reportingDateText = ""
         categoryID = nil
         originalPurchaseID = nil
@@ -53,7 +53,7 @@ final class CaptureModel: ObservableObject {
 
     func prefillCategory() {
         guard !categoryChosenManually else { return }
-        guard let category = try? ledger.defaultCategory(forCounterpartyName: counterparty) else { return }
+        guard let category = try? ledger.defaultCategory(forPayeeName: payee) else { return }
         applyingPrefill = true
         categoryID = category.id
         applyingPrefill = false
@@ -71,7 +71,7 @@ final class CaptureModel: ObservableObject {
             amountText = String(format: "%d.%02d", amount.value / 100, amount.value % 100)
         }
         kind = parsed.draft.kind
-        if let name = parsed.draft.counterparty { counterparty = name }
+        if let name = parsed.draft.payee { payee = name }
         if let date = parsed.draft.reportingDate { reportingDateText = date.iso8601 }
         applyingPrefill = true
         categoryID = parsed.draft.categoryID
@@ -103,7 +103,7 @@ final class CaptureModel: ObservableObject {
         let draft = EntryDraft(
             amount: Cents(euroText: amountText),
             kind: kind,
-            counterparty: counterparty,
+            payee: payee,
             reportingDate: ReportingDate(iso8601: reportingDateText),
             categoryID: categoryID,
             originalPurchaseID: kind == .refund ? originalPurchaseID : nil
@@ -182,8 +182,8 @@ struct CaptureScreen: View {
                         }
                     }
                     if model.kind != .refund || model.originalPurchaseID == nil {
-                        TextField("Counterparty", text: $model.counterparty, prompt: Text("Who was paid"))
-                            .onChange(of: model.counterparty) { _, _ in model.prefillCategory() }
+                        TextField("Payee", text: $model.payee, prompt: Text("Who was paid"))
+                            .onChange(of: model.payee) { _, _ in model.prefillCategory() }
                     }
                     HStack {
                         TextField("Reporting date", text: $model.reportingDateText, prompt: Text("YYYY-MM-DD"))
@@ -232,7 +232,7 @@ struct CaptureScreen: View {
 }
 
 private func purchaseLabel(_ purchase: LedgerTransaction) -> String {
-    "\(purchase.counterparty.name) · \(signedEuro(purchase.amount.value)) · \(purchase.reportingDate.iso8601)"
+    "\(purchase.payee.name) · \(signedEuro(purchase.amount.value)) · \(purchase.reportingDate.iso8601)"
 }
 
 public struct CaptureRoot: View {
@@ -286,7 +286,7 @@ struct TransactionRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(transaction.counterparty.name)
+                Text(transaction.payee.name)
                 Text("\(transaction.category.name) · \(transaction.reportingDate.iso8601)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -331,7 +331,7 @@ func monthTitle(_ date: ReportingDate) -> String {
 private func refusalMessage(_ error: RecordEntryError) -> String {
     switch error {
     case .incomplete(let fields):
-        let ordered: [EntryField] = [.amount, .kind, .counterparty, .reportingDate, .category]
+        let ordered: [EntryField] = [.amount, .kind, .payee, .reportingDate, .category]
         let missing = ordered.filter(fields.contains).map(fieldName)
         return "Enter \(missing.joined(separator: ", "))."
     case .unknownCategory:
@@ -347,7 +347,7 @@ private func fieldName(_ field: EntryField) -> String {
     switch field {
     case .amount: "an amount"
     case .kind: "a kind"
-    case .counterparty: "a counterparty"
+    case .payee: "a payee"
     case .reportingDate: "a reporting date"
     case .category: "a category"
     }
