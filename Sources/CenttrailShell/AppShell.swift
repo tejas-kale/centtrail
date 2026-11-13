@@ -25,7 +25,7 @@ struct ReportsScreen: View {
     @ObservedObject var model: CaptureModel
     @State private var rows: [BreakdownRow] = []
     @State private var rangeLabel = ""
-    @State private var comparison: ComparisonResult?
+    @State private var comparison: LedgerComparison?
     @State private var showsTable = false
     @State private var question = ""
     @State private var answer = ""
