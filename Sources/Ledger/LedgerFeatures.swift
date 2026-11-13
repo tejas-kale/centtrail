@@ -21,7 +21,7 @@ SELECT
 FROM entry
 JOIN counterparty ON counterparty.id = entry.counterparty_id
 JOIN category AS entry_category ON entry_category.id = entry.category_id
-JOIN category AS default_category ON default_category.id = counterparty.default_category_id
+LEFT JOIN category AS default_category ON default_category.id = counterparty.default_category_id
 """
 
 extension Ledger {
@@ -79,9 +79,6 @@ extension Ledger {
               let provenance = row[4].text.flatMap(CategoryProvenance.init(rawValue:)),
               let counterpartyID = row[8].text.flatMap(UUID.init(uuidString:)),
               let counterpartyName = row[9].text,
-              let defaultCategoryID = row[10].text.flatMap(UUID.init(uuidString:)),
-              let defaultCategoryName = row[11].text,
-              let defaultSpending = row[12].integer,
               let categoryID = row[13].text.flatMap(UUID.init(uuidString:)),
               let categoryName = row[14].text,
               let categorySpending = row[15].integer
@@ -97,11 +94,7 @@ extension Ledger {
             counterparty: Counterparty(
                 id: Counterparty.ID(rawValue: counterpartyID),
                 name: counterpartyName,
-                defaultCategory: Category(
-                    id: Category.ID(rawValue: defaultCategoryID),
-                    name: defaultCategoryName,
-                    countsAsSpending: defaultSpending != 0
-                )
+                defaultCategory: try category(idText: row[10].text, name: row[11].text, spending: row[12].integer)
             ),
             reportingDate: reportingDate,
             category: Category(
@@ -120,28 +113,21 @@ extension Ledger {
             """
             SELECT counterparty.id, counterparty.name, category.id, category.name, category.counts_as_spending
             FROM counterparty
-            JOIN category ON category.id = counterparty.default_category_id
+            LEFT JOIN category ON category.id = counterparty.default_category_id
             ORDER BY counterparty.name
             """
         )
         return try rows.map { row in
             guard row.count == 5,
                   let id = row[0].text.flatMap(UUID.init(uuidString:)),
-                  let name = row[1].text,
-                  let categoryID = row[2].text.flatMap(UUID.init(uuidString:)),
-                  let categoryName = row[3].text,
-                  let spending = row[4].integer
+                  let name = row[1].text
             else {
                 throw LedgerError(message: "The ledger returned a counterparty it could not read.")
             }
             return Counterparty(
                 id: Counterparty.ID(rawValue: id),
                 name: name,
-                defaultCategory: Category(
-                    id: Category.ID(rawValue: categoryID),
-                    name: categoryName,
-                    countsAsSpending: spending != 0
-                )
+                defaultCategory: try category(idText: row[2].text, name: row[3].text, spending: row[4].integer)
             )
         }
     }
@@ -157,6 +143,14 @@ extension Ledger {
             throw LedgerError(message: "That counterparty is not in the ledger.")
         }
         return match
+    }
+
+    func category(idText: String?, name: String?, spending: Int64?) throws -> Category? {
+        if idText == nil, name == nil, spending == nil { return nil }
+        guard let idText, let id = UUID(uuidString: idText), let name, let spending else {
+            throw LedgerError(message: "The ledger returned a category it could not read.")
+        }
+        return Category(id: Category.ID(rawValue: id), name: name, countsAsSpending: spending != 0)
     }
 
     public func setDefaultCategory(_ categoryID: Category.ID, for counterpartyID: Counterparty.ID) throws {
@@ -177,6 +171,10 @@ extension Ledger {
                   AND kind != 'refund'
                 """,
                 bindings: [.text(stored(categoryID.rawValue)), .text(stored(counterpartyID.rawValue))]
+            )
+            try connection.execute(
+                "DELETE FROM proposed_payee_default WHERE counterparty_id = ?",
+                bindings: [.text(stored(counterpartyID.rawValue))]
             )
             try refreshLinkedRefundCategories()
             try connection.execute("COMMIT")

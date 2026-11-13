@@ -19,7 +19,7 @@ import Testing
     let reread = try ledger.transactions().first { $0.id == recorded.id }
     #expect(reread?.category.name == "Household Requirements")
     #expect(reread?.categoryProvenance == .overridden)
-    #expect(reread?.counterparty.defaultCategory.name == "Restaurant")
+    #expect(reread?.counterparty.defaultCategory?.name == "Restaurant")
 }
 
 @Test func changingTheDefaultRecategorizesInheritedEntriesInAPastMonth() throws {
@@ -40,5 +40,5 @@ import Testing
     let supermarket = try namedCategory(ledger, "Supermarket")
     let recorded = try ledger.record(EntryDraft(amount: Cents(100), kind: .expense, counterparty: "REWE", reportingDate: ReportingDate(iso8601: "2026-03-01"), categoryID: supermarket.id, overridesCategory: true))
     #expect(recorded.categoryProvenance == .overridden)
-    #expect(recorded.category.id == recorded.counterparty.defaultCategory.id)
+    #expect(recorded.category.id == recorded.counterparty.defaultCategory?.id)
 }

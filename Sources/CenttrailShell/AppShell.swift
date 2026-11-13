@@ -200,8 +200,9 @@ struct PeopleScreen: View {
                 Section("Counterparties") {
                     ForEach(people) { person in
                         Picker(person.name, selection: binding(for: person)) {
+                            Text("None").tag(Optional<LedgerCategoryID>.none)
                             ForEach(model.categories) { category in
-                                Text(category.name).tag(category.id)
+                                Text(category.name).tag(Optional(category.id))
                             }
                         }
                     }
@@ -222,11 +223,13 @@ struct PeopleScreen: View {
         }
     }
 
-    private func binding(for person: Counterparty) -> Binding<LedgerCategoryID> {
+    private func binding(for person: Counterparty) -> Binding<LedgerCategoryID?> {
         Binding(
-            get: { person.defaultCategory.id },
+            get: { person.defaultCategory?.id },
             set: { newValue in
-                try? model.ledger.setDefaultCategory(newValue, for: person.id)
+                if let newValue {
+                    try? model.ledger.setDefaultCategory(newValue, for: person.id)
+                }
                 reload()
             }
         )
@@ -286,6 +289,8 @@ struct ImportScreen: View {
     @ObservedObject var model: CaptureModel
     @State private var csv = ""
     @State private var rows: [ImportRow] = []
+    @State private var proposals: [ProposedPayeeDefault] = []
+    @State private var acceptedPayees: Set<String> = []
     @State private var dateColumn = "Date"
     @State private var message = ""
 
@@ -299,11 +304,28 @@ struct ImportScreen: View {
                 if !message.isEmpty { Text(message) }
                 ForEach(rows) { row in
                     VStack(alignment: .leading) {
-                        Text("\(row.payee ?? "") · \(row.categoryName ?? "") · \(row.reportingDate ?? "")")
+                        Text("\(row.payee ?? "") · \(row.amountText ?? "") · \(row.categoryName ?? "") · \(row.reportingDate ?? "")")
                         Text(stateLabel(row.state)).font(.footnote).foregroundStyle(.secondary)
+                        if let proposed = row.proposedDefaultCategoryName, let payee = row.payee {
+                            Text("Proposed default for \(payee): \(proposed)")
+                                .font(.footnote)
+                            if acceptedPayees.contains(payee) {
+                                Text("Default will be accepted on commit.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Button("Accept default") { acceptedPayees.insert(payee) }
+                            }
+                        }
                     }
                     if case .uncertainMatch = row.state {
                         Button("Keep this row") { keep(row) }
+                    }
+                }
+                ForEach(proposals) { proposal in
+                    VStack(alignment: .leading) {
+                        Text("Proposed default for \(proposal.payee): \(proposal.categoryName)")
+                        Button("Accept default") { accept(proposal) }
                     }
                 }
             }
@@ -313,18 +335,36 @@ struct ImportScreen: View {
 
     private func preview() {
         rows = (try? model.ledger.previewImport(csv, mapping: ImportMapping(reportingDateColumn: dateColumn))) ?? []
+        proposals = (try? model.ledger.proposedPayeeDefaults()) ?? []
         message = "\(rows.count) rows"
     }
 
     private func commit() {
-        let result = try? model.ledger.commitImport(csv, mapping: ImportMapping(reportingDateColumn: dateColumn))
+        let result = try? model.ledger.commitImport(
+            csv,
+            mapping: ImportMapping(reportingDateColumn: dateColumn),
+            acceptedPayees: acceptedPayees
+        )
         message = "Imported \(result?.importedCount ?? 0)"
+        acceptedPayees = []
         try? model.reloadFromOutside()
         preview()
     }
 
     private func keep(_ row: ImportRow) {
-        _ = try? model.ledger.commitImport(csv, mapping: ImportMapping(reportingDateColumn: dateColumn), uncertain: [row.index: .keep])
+        _ = try? model.ledger.commitImport(
+            csv,
+            mapping: ImportMapping(reportingDateColumn: dateColumn),
+            uncertain: [row.index: .keep],
+            acceptedPayees: acceptedPayees
+        )
+        acceptedPayees = []
+        try? model.reloadFromOutside()
+        preview()
+    }
+
+    private func accept(_ proposal: ProposedPayeeDefault) {
+        try? model.ledger.acceptProposedPayeeDefault(for: proposal.counterpartyID)
         try? model.reloadFromOutside()
         preview()
     }

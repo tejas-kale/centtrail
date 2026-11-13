@@ -22,8 +22,31 @@ public struct ImportRow: Equatable, Sendable, Identifiable {
     public let amountText: String?
     public let categoryName: String?
     public let payee: String?
+    public let proposedDefaultCategoryName: String?
 
     public var id: Int { index }
+
+    public init(
+        index: Int,
+        state: ImportRowState,
+        reportingDate: String?,
+        amountText: String?,
+        categoryName: String?,
+        payee: String?,
+        proposedDefaultCategoryName: String? = nil
+    ) {
+        self.index = index
+        self.state = state
+        self.reportingDate = reportingDate
+        self.amountText = amountText
+        self.categoryName = categoryName
+        self.payee = payee
+        self.proposedDefaultCategoryName = proposedDefaultCategoryName
+    }
+}
+
+public struct ImportCommitResult: Equatable, Sendable {
+    public let importedCount: Int
 }
 
 public enum UncertainDecision: Equatable, Sendable {
@@ -31,8 +54,18 @@ public enum UncertainDecision: Equatable, Sendable {
     case skip
 }
 
-public struct ImportCommitResult: Equatable, Sendable {
-    public let importedCount: Int
+public struct ProposedPayeeDefault: Equatable, Sendable, Identifiable {
+    public let counterpartyID: Counterparty.ID
+    public let payee: String
+    public let categoryName: String
+
+    public var id: Counterparty.ID { counterpartyID }
+
+    public init(counterpartyID: Counterparty.ID, payee: String, categoryName: String) {
+        self.counterpartyID = counterpartyID
+        self.payee = payee
+        self.categoryName = categoryName
+    }
 }
 
 private let incomeCategoryNames: Set<String> = ["Salary", "Kindergeld"]
@@ -45,7 +78,8 @@ extension Ledger {
     public func commitImport(
         _ csv: String,
         mapping: ImportMapping = ImportMapping(),
-        uncertain: [Int: UncertainDecision] = [:]
+        uncertain: [Int: UncertainDecision] = [:],
+        acceptedPayees: Set<String> = []
     ) throws -> ImportCommitResult {
         let classified = try classifiedRows(csv, mapping: mapping)
         var imported = 0
@@ -61,6 +95,13 @@ extension Ledger {
                     try commit(item)
                     imported += 1
                 }
+            }
+        }
+        for payee in acceptedPayees {
+            let name = payee.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let id = try resolveCounterpartyID(named: name) else { continue }
+            if try proposedCategoryID(for: id) != nil {
+                try acceptProposedPayeeDefault(for: Counterparty.ID(rawValue: id))
             }
         }
         return ImportCommitResult(importedCount: imported)
@@ -143,6 +184,7 @@ extension Ledger {
                 note: note?.isEmpty == true ? nil : note
             )
             let state = try importState(for: fingerprint, earlierInFile: classified)
+            let proposedName = try proposedDefaultName(payee: payee, categoryName: category!.name, earlierInFile: classified)
             let draft = EntryDraft(
                 amount: Cents(parsedAmount.cents),
                 kind: kind,
@@ -152,7 +194,15 @@ extension Ledger {
                 note: fingerprint.note
             )
             classified.append(ClassifiedImport(
-                row: ImportRow(index: offset, state: state, reportingDate: rowDate, amountText: amountText, categoryName: categoryName, payee: payee),
+                row: ImportRow(
+                    index: offset,
+                    state: state,
+                    reportingDate: rowDate,
+                    amountText: amountText,
+                    categoryName: categoryName,
+                    payee: payee,
+                    proposedDefaultCategoryName: proposedName
+                ),
                 draft: draft,
                 fingerprint: fingerprint
             ))
@@ -212,9 +262,45 @@ extension Ledger {
         return .ready
     }
 
+    private func proposedDefaultName(payee: String, categoryName: String, earlierInFile: [ClassifiedImport]) throws -> String? {
+        guard !payee.isEmpty, !categoryName.isEmpty else { return nil }
+        if earlierInFile.contains(where: { $0.fingerprint?.payee == payee }) { return nil }
+        if try resolveCounterpartyID(named: payee) != nil { return nil }
+        return categoryName
+    }
+
+    public func proposedPayeeDefaults() throws -> [ProposedPayeeDefault] {
+        let rows = try connection.query(
+            """
+            SELECT counterparty.id, counterparty.name, category.name
+            FROM proposed_payee_default
+            JOIN counterparty ON counterparty.id = proposed_payee_default.counterparty_id
+            JOIN category ON category.id = proposed_payee_default.category_id
+            ORDER BY counterparty.name
+            """
+        )
+        return try rows.map { row in
+            guard row.count == 3,
+                  let id = row[0].text.flatMap(UUID.init(uuidString:)),
+                  let payee = row[1].text,
+                  let categoryName = row[2].text
+            else {
+                throw LedgerError(message: "The ledger returned a proposed default it could not read.")
+            }
+            return ProposedPayeeDefault(counterpartyID: Counterparty.ID(rawValue: id), payee: payee, categoryName: categoryName)
+        }
+    }
+
+    public func acceptProposedPayeeDefault(for counterpartyID: Counterparty.ID) throws {
+        guard let categoryID = try proposedCategoryID(for: counterpartyID.rawValue) else {
+            throw LedgerError(message: "That payee has no proposed default.")
+        }
+        try setDefaultCategory(categoryID, for: counterpartyID)
+    }
+
     private func commit(_ item: ClassifiedImport) throws {
         guard let draft = item.draft, let fingerprint = item.fingerprint else { return }
-        let recorded = try record(draft)
+        let recorded = try record(draft, proposeDefaultForNewPayee: true)
         try connection.execute(
             """
             INSERT INTO import_row (id, entry_id, source_timestamp, amount_cents, payee, source_account)
