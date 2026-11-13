@@ -70,7 +70,8 @@ public final class Ledger {
         guard let kind = draft.kind else {
             throw RecordEntryError.incomplete([.kind])
         }
-        guard let counterpartyName = draft.counterparty else {
+        let counterpartyName = draft.counterparty?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !counterpartyName.isEmpty else {
             throw RecordEntryError.incomplete([.counterparty])
         }
         guard let reportingDate = draft.reportingDate,
