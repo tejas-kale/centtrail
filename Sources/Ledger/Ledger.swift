@@ -77,7 +77,6 @@ public final class Ledger {
         try addColumn("counterparty", "default_category_id TEXT")
         try addColumn("entry", "category_provenance TEXT NOT NULL DEFAULT 'inherited'")
         try addColumn("entry", "note TEXT")
-        try addColumn("entry", "original_entry_id TEXT")
         try addColumn("entry", "trashed_on TEXT")
         try connection.execute(
             """
@@ -139,9 +138,6 @@ public final class Ledger {
     }
 
     func record(_ draft: EntryDraft, proposeDefaultForNewPayee: Bool) throws -> Transaction {
-        if draft.kind == .refund, draft.originalPurchaseID != nil {
-            return try recordLinkedRefund(draft)
-        }
         let payeeName = draft.payee?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var missing: Set<EntryField> = []
         if draft.amount == nil { missing.insert(.amount) }
@@ -183,36 +179,7 @@ public final class Ledger {
                 reportingDate: reportingDate,
                 categoryID: category.id,
                 provenance: provenance,
-                note: draft.note,
-                originalPurchaseID: nil
-            )
-            try connection.execute("COMMIT")
-            return try requireTransaction(id: entryID)
-        } catch {
-            try? connection.execute("ROLLBACK")
-            throw error
-        }
-    }
-
-    private func recordLinkedRefund(_ draft: EntryDraft) throws -> Transaction {
-        guard let amount = draft.amount, let reportingDate = draft.reportingDate, let originalID = draft.originalPurchaseID else {
-            throw RecordEntryError.linkedRefundNeedsPurchase
-        }
-        let original = try transaction(id: originalID)
-        guard original.kind == .expense else { throw RecordEntryError.linkedRefundNeedsPurchase }
-        let entryID = UUID()
-        try connection.execute("BEGIN")
-        do {
-            try insertEntry(
-                id: entryID,
-                amount: amount,
-                kind: .refund,
-                payeeID: original.payee.id.rawValue,
-                reportingDate: reportingDate,
-                categoryID: original.category.id,
-                provenance: .inherited,
-                note: draft.note,
-                originalPurchaseID: original.id.rawValue
+                note: draft.note
             )
             try connection.execute("COMMIT")
             return try requireTransaction(id: entryID)
@@ -233,20 +200,6 @@ public final class Ledger {
             WHERE entry.trashed_on IS NULL
             ORDER BY entry.reporting_date DESC, entry.rowid DESC
             """
-        )
-        return try rows.map(decodeTransaction)
-    }
-
-    public func linkedRefunds(for purchaseID: Transaction.ID) throws -> [Transaction] {
-        let rows = try connection.query(
-            """
-            \(entrySelectSQL)
-            WHERE entry.original_entry_id = ?
-              AND entry.kind = 'refund'
-              AND entry.trashed_on IS NULL
-            ORDER BY entry.reporting_date DESC, entry.rowid DESC
-            """,
-            bindings: [.text(stored(purchaseID.rawValue))]
         )
         return try rows.map(decodeTransaction)
     }

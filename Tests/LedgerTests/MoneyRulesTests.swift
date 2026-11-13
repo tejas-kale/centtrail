@@ -20,51 +20,28 @@ import Testing
     #expect(try ledger.runReport(.currentMonthSpending, today: today) == .spendingTotal(SignedCents(1500)))
 }
 
-@Test func aLinkedFebruaryRefundReducesFebruaryAndLeavesJanuary() throws {
-    let ledger = try Ledger.openInMemory()
-    let purchase = try recordEntry(ledger, cents: 10_000, kind: .expense, payee: "Osteria", date: "2026-01-10", category: "Restaurant")
-    _ = try ledger.record(EntryDraft(amount: Cents(2000), kind: .refund, reportingDate: ReportingDate(iso8601: "2026-02-04"), originalPurchaseID: purchase.id))
-    let today = try #require(ReportingDate(iso8601: "2026-03-01"))
-    #expect(try spendingTotal(ledger, from: "2026-01-01", through: "2026-01-31", today: today) == 10_000)
-    #expect(try spendingTotal(ledger, from: "2026-02-01", through: "2026-02-28", today: today) == -2000)
+@Test func transactionKindsAreExpenseIncomeAndTransferOnly() {
+    #expect(Kind(rawValue: "expense") == .expense)
+    #expect(Kind(rawValue: "income") == .income)
+    #expect(Kind(rawValue: "transfer") == .transfer)
+    #expect(Kind(rawValue: "refund") == nil)
+    #expect(Kind(rawValue: "repayment") == nil)
 }
 
-@Test func recategorizingOrTrashingThePurchaseLeavesTheRefundCategorized() throws {
+@Test func novemberPurchaseAndRefundReportGrossSpendingAndIncome() throws {
     let ledger = try Ledger.openInMemory()
-    let purchase = try recordEntry(ledger, cents: 10_000, kind: .expense, payee: "Osteria", date: "2026-01-10", category: "Restaurant")
-    let refund = try ledger.record(EntryDraft(amount: Cents(2000), kind: .refund, reportingDate: ReportingDate(iso8601: "2026-02-04"), originalPurchaseID: purchase.id))
-    try ledger.setCategory(try namedCategory(ledger, "Hotel").id, for: purchase.id)
-    #expect(try ledger.transaction(id: refund.id).category.name == "Hotel")
-    try ledger.trash(purchase.id, on: try #require(ReportingDate(iso8601: "2026-02-05")))
-    #expect(try ledger.transaction(id: refund.id).category.name == "Hotel")
-    let today = try #require(ReportingDate(iso8601: "2026-02-10"))
-    #expect(try spendingTotal(ledger, from: "2026-02-01", through: "2026-02-28", today: today) == -2000)
+    _ = try recordEntry(ledger, cents: 10_000, kind: .expense, payee: "Zara", date: "2026-11-05", category: "Shopping")
+    _ = try recordEntry(ledger, cents: 10_000, kind: .income, payee: "Zara", date: "2026-11-12", category: "Shopping")
+    let today = try #require(ReportingDate(iso8601: "2026-11-20"))
+    #expect(try ledger.runReport(.currentMonthSpending, today: today) == .spendingTotal(SignedCents(10_000)))
+    #expect(try ledger.runReport(.currentMonthIncome, today: today) == .incomeTotal(SignedCents(10_000)))
 }
 
-@Test func anUnlinkedRefundNeedsAPayeeAndCategory() throws {
-    let ledger = try Ledger.openInMemory()
-    #expect(throws: RecordEntryError.incomplete([.payee, .category])) {
-        try ledger.record(EntryDraft(amount: Cents(500), kind: .refund, reportingDate: ReportingDate(iso8601: "2026-02-01")))
-    }
-}
-
-@Test func aLinkedRefundStaysAttachedToItsPurchase() throws {
-    let ledger = try Ledger.openInMemory()
-    let purchase = try recordEntry(ledger, cents: 10_000, kind: .expense, payee: "Osteria", date: "2026-01-10", category: "Restaurant")
-    let other = try recordEntry(ledger, cents: 3000, kind: .expense, payee: "REWE", date: "2026-01-11", category: "Supermarket")
-    let refund = try ledger.record(EntryDraft(amount: Cents(2000), kind: .refund, reportingDate: ReportingDate(iso8601: "2026-02-04"), originalPurchaseID: purchase.id))
-    #expect(try ledger.linkedRefunds(for: purchase.id).map(\.id) == [refund.id])
-    #expect(try ledger.linkedRefunds(for: other.id).isEmpty)
-    #expect(try ledger.transaction(id: refund.id).originalPurchaseID == purchase.id)
-    #expect(try ledger.transaction(id: refund.id).category.name == "Restaurant")
-}
-
-@Test func savingsTransfersAndRepaymentsAreExcludedFromSpending() throws {
+@Test func savingsAndTransfersAreExcludedFromSpending() throws {
     let ledger = try Ledger.openInMemory()
     _ = try recordEntry(ledger, cents: 5_000, kind: .expense, payee: "REWE", date: "2026-03-01", category: "Supermarket")
     _ = try recordEntry(ledger, cents: 80_000, kind: .expense, payee: "Savings pot", date: "2026-03-02", category: "Savings")
     _ = try recordEntry(ledger, cents: 20_000, kind: .transfer, payee: "N26", date: "2026-03-03", category: "Salary")
-    _ = try recordEntry(ledger, cents: 15_000, kind: .repayment, payee: "Visa", date: "2026-03-04", category: "Shopping")
     let today = try #require(ReportingDate(iso8601: "2026-03-15"))
     #expect(try ledger.runReport(.currentMonthSpending, today: today) == .spendingTotal(SignedCents(5_000)))
 }
