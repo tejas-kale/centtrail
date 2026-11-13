@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] The Ledger core is a Swift package whose public interface is the only seam tests use; tests run against a real in-memory SQLite database
 - [ ] Amounts are stored as integer EUR cents; the reporting date is a calendar date that does not shift with the device's time zone
