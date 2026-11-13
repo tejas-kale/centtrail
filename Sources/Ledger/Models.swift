@@ -7,6 +7,35 @@ public struct Cents: Hashable, Sendable {
         precondition(value >= 0, "An amount is a non-negative number of EUR cents.")
         self.value = value
     }
+
+    /// Parses a non-negative euro amount with at most two decimal places.
+    /// A dot or a comma is the decimal separator. "12.50" and "12,50" are 1250 cents.
+    public init?(euroText: String) {
+        let trimmed = euroText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let separatorCount = trimmed.count(where: { $0 == "." || $0 == "," })
+        guard separatorCount <= 1 else { return nil }
+
+        let parts = trimmed.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "." || $0 == "," })
+        guard parts.count == 1 || parts.count == 2 else { return nil }
+        guard let euros = Self.digits(parts[0]) else { return nil }
+
+        let fraction: Int
+        if parts.count == 2 {
+            let text = parts[1]
+            guard (1...2).contains(text.count), let parsed = Self.digits(text) else { return nil }
+            fraction = text.count == 1 ? parsed * 10 : parsed
+        } else {
+            fraction = 0
+        }
+
+        self.init(euros * 100 + fraction)
+    }
+
+    private static func digits(_ text: Substring) -> Int? {
+        guard !text.isEmpty, text.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        return Int(text)
+    }
 }
 
 public enum Kind: String, Hashable, Sendable {
