@@ -214,6 +214,20 @@ public final class Ledger {
         return try rows.map(decodeTransaction)
     }
 
+    public func linkedRefunds(for purchaseID: Transaction.ID) throws -> [Transaction] {
+        let rows = try connection.query(
+            """
+            \(entrySelectSQL)
+            WHERE entry.original_entry_id = ?
+              AND entry.kind = 'refund'
+              AND entry.trashed_on IS NULL
+            ORDER BY entry.reporting_date DESC, entry.rowid DESC
+            """,
+            bindings: [.text(stored(purchaseID.rawValue))]
+        )
+        return try rows.map(decodeTransaction)
+    }
+
     func monthBounds(containing today: ReportingDate) -> (start: String, end: String) {
         let start = String(format: "%04d-%02d-01", today.year, today.month)
         let end: String

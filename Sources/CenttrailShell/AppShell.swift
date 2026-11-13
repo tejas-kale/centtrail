@@ -4,6 +4,7 @@ import SwiftUI
 
 struct TransactionDetail: View {
     let transaction: LedgerTransaction
+    let ledger: Ledger
 
     var body: some View {
         Form {
@@ -16,8 +17,37 @@ struct TransactionDetail: View {
             if let note = transaction.note, !note.isEmpty {
                 LabeledContent("Note", value: note)
             }
+            if let purchase = originalPurchase {
+                Section("Original purchase") {
+                    NavigationLink {
+                        TransactionDetail(transaction: purchase, ledger: ledger)
+                    } label: {
+                        Text("\(purchase.counterparty.name) · \(signedEuro(purchase.amount.value)) · \(purchase.reportingDate.iso8601)")
+                    }
+                }
+            }
+            if !linkedRefunds.isEmpty {
+                Section("Refunds") {
+                    ForEach(linkedRefunds) { refund in
+                        NavigationLink {
+                            TransactionDetail(transaction: refund, ledger: ledger)
+                        } label: {
+                            Text("\(signedEuro(refund.amount.value)) · \(refund.reportingDate.iso8601)")
+                        }
+                    }
+                }
+            }
         }
         .navigationTitle(transaction.counterparty.name)
+    }
+
+    private var originalPurchase: LedgerTransaction? {
+        guard let id = transaction.originalPurchaseID else { return nil }
+        return try? ledger.transaction(id: id)
+    }
+
+    private var linkedRefunds: [LedgerTransaction] {
+        (try? ledger.linkedRefunds(for: transaction.id)) ?? []
     }
 }
 
@@ -89,7 +119,7 @@ struct ReportsScreen: View {
                     Button("Search", action: search)
                     ForEach(matches) { transaction in
                         NavigationLink {
-                            TransactionDetail(transaction: transaction)
+                            TransactionDetail(transaction: transaction, ledger: model.ledger)
                         } label: {
                             TransactionRow(transaction: transaction)
                         }
