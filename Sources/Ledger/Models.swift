@@ -365,3 +365,62 @@ public struct EntryDraft: Equatable, Sendable {
     public var overridesCategory: Bool
     public var note: String?
 }
+
+/// Per-category spending comparison for the home summary.
+public struct CategorySummary: Hashable, Sendable, Identifiable {
+    public var id: Category.ID { category.id }
+    public let category: Category
+    public let currentCents: Int
+    public let previousSameDaysCents: Int
+    public let previousFullMonthCents: Int
+
+    public init(
+        category: Category,
+        currentCents: Int,
+        previousSameDaysCents: Int,
+        previousFullMonthCents: Int
+    ) {
+        self.category = category
+        self.currentCents = currentCents
+        self.previousSameDaysCents = previousSameDaysCents
+        self.previousFullMonthCents = previousFullMonthCents
+    }
+}
+
+/// Summary of this month's spending against the same elapsed days and full total of last month.
+public struct HomeSummary: Hashable, Sendable {
+    public let currentMonthRange: DateRange
+    public let previousSameDaysRange: DateRange
+    public let previousFullMonthRange: DateRange
+    public let currentSpendingCents: Int
+    public let previousSameDaysSpendingCents: Int
+    public let previousFullMonthSpendingCents: Int
+    public let changeCents: Int
+    public let percentageChange: Double?
+    public let unequalLengths: Bool
+    public let categories: [CategorySummary]
+
+    public init(
+        currentMonthRange: DateRange,
+        previousSameDaysRange: DateRange,
+        previousFullMonthRange: DateRange,
+        currentSpendingCents: Int,
+        previousSameDaysSpendingCents: Int,
+        previousFullMonthSpendingCents: Int,
+        changeCents: Int,
+        percentageChange: Double?,
+        unequalLengths: Bool,
+        categories: [CategorySummary]
+    ) {
+        self.currentMonthRange = currentMonthRange
+        self.previousSameDaysRange = previousSameDaysRange
+        self.previousFullMonthRange = previousFullMonthRange
+        self.currentSpendingCents = currentSpendingCents
+        self.previousSameDaysSpendingCents = previousSameDaysSpendingCents
+        self.previousFullMonthSpendingCents = previousFullMonthSpendingCents
+        self.changeCents = changeCents
+        self.percentageChange = percentageChange
+        self.unequalLengths = unequalLengths
+        self.categories = categories
+    }
+}

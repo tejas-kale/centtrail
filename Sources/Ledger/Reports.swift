@@ -141,12 +141,40 @@ extension Ledger {
         return grouped
     }
 
-    private func comparison(
-        today: ReportingDate,
-        measure: Measure,
-        categoryID: Category.ID?,
-        payeeName: String?
-    ) throws -> ComparisonResult {
+    /// Computes spending summary for the current month through `today` against last month's same elapsed days and full total.
+    public func homeSummary(on today: ReportingDate) throws -> HomeSummary {
+        let ranges = monthComparisonRanges(on: today)
+        let currentCents = try sum(query: ReportQuery(measure: .spending), range: ranges.current)
+        let previousSameDaysCents = try sum(query: ReportQuery(measure: .spending), range: ranges.previousSameDays)
+        let previousFullCents = try sum(query: ReportQuery(measure: .spending), range: ranges.previousFull)
+        let change = currentCents - previousSameDaysCents
+        let percentage: Double? = previousSameDaysCents == 0
+            ? nil
+            : (Double(change) / Double(previousSameDaysCents)) * 100
+
+        let categorySummaries = try categoryBreakdownForHome(
+            currentRange: ranges.current,
+            previousSameDaysRange: ranges.previousSameDays,
+            previousFullRange: ranges.previousFull
+        )
+
+        return HomeSummary(
+            currentMonthRange: ranges.current,
+            previousSameDaysRange: ranges.previousSameDays,
+            previousFullMonthRange: ranges.previousFull,
+            currentSpendingCents: currentCents,
+            previousSameDaysSpendingCents: previousSameDaysCents,
+            previousFullMonthSpendingCents: previousFullCents,
+            changeCents: change,
+            percentageChange: percentage,
+            unequalLengths: ranges.unequalLengths,
+            categories: categorySummaries
+        )
+    }
+
+    private func monthComparisonRanges(
+        on today: ReportingDate
+    ) -> (current: DateRange, previousSameDays: DateRange, previousFull: DateRange, unequalLengths: Bool) {
         let laterStart = ReportingDate(year: today.year, month: today.month, day: 1)!
         var earlierYear = today.year
         var earlierMonth = today.month - 1
@@ -158,19 +186,91 @@ extension Ledger {
         let earlierEndDay = min(today.day, earlierDayCount)
         let earlierStart = ReportingDate(year: earlierYear, month: earlierMonth, day: 1)!
         let earlierEnd = ReportingDate(year: earlierYear, month: earlierMonth, day: earlierEndDay)!
-        let earlierRange = DateRange(start: earlierStart, end: earlierEnd)
-        let laterRange = DateRange(start: laterStart, end: today)
+        let earlierFullEnd = ReportingDate(year: earlierYear, month: earlierMonth, day: earlierDayCount)!
+        return (
+            current: DateRange(start: laterStart, end: today),
+            previousSameDays: DateRange(start: earlierStart, end: earlierEnd),
+            previousFull: DateRange(start: earlierStart, end: earlierFullEnd),
+            unequalLengths: earlierEndDay != today.day
+        )
+    }
+
+    private func categoryBreakdownForHome(
+        currentRange: DateRange,
+        previousSameDaysRange: DateRange,
+        previousFullRange: DateRange
+    ) throws -> [CategorySummary] {
+        let allCategories = try categories()
+        let sql = """
+        SELECT
+            entry.category_id,
+            COALESCE(SUM(CASE WHEN entry.reporting_date >= ? AND entry.reporting_date <= ? THEN \(spendingExpression) ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN entry.reporting_date >= ? AND entry.reporting_date <= ? THEN \(spendingExpression) ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN entry.reporting_date >= ? AND entry.reporting_date <= ? THEN \(spendingExpression) ELSE 0 END), 0)
+        \(reportFrom)
+        WHERE entry.trashed_on IS NULL
+          AND entry_category.counts_as_spending = 1
+          AND entry.kind = 'expense'
+          AND (
+            (entry.reporting_date >= ? AND entry.reporting_date <= ?)
+            OR (entry.reporting_date >= ? AND entry.reporting_date <= ?)
+          )
+        GROUP BY entry.category_id
+        """
+        let bindings: [SQLiteValue] = [
+            .text(currentRange.start.iso8601), .text(currentRange.end.iso8601),
+            .text(previousSameDaysRange.start.iso8601), .text(previousSameDaysRange.end.iso8601),
+            .text(previousFullRange.start.iso8601), .text(previousFullRange.end.iso8601),
+            .text(currentRange.start.iso8601), .text(currentRange.end.iso8601),
+            .text(previousFullRange.start.iso8601), .text(previousFullRange.end.iso8601),
+        ]
+        let rows = try connection.query(sql, bindings: bindings)
+        let byID = Dictionary(uniqueKeysWithValues: allCategories.map { (stored($0.id.rawValue), $0) })
+        return rows.compactMap { row -> CategorySummary? in
+            guard row.count == 4,
+                  let idText = row[0].text,
+                  let category = byID[idText],
+                  let current = row[1].integer,
+                  let previousSameDays = row[2].integer,
+                  let previousFull = row[3].integer
+            else { return nil }
+            let currentInt = Int(current)
+            let previousSameDaysInt = Int(previousSameDays)
+            let previousFullInt = Int(previousFull)
+            guard currentInt > 0 || previousSameDaysInt > 0 || previousFullInt > 0 else { return nil }
+            return CategorySummary(
+                category: category,
+                currentCents: currentInt,
+                previousSameDaysCents: previousSameDaysInt,
+                previousFullMonthCents: previousFullInt
+            )
+        }
+        .sorted {
+            if $0.currentCents != $1.currentCents {
+                return $0.currentCents > $1.currentCents
+            }
+            return $0.category.name < $1.category.name
+        }
+    }
+
+    private func comparison(
+        today: ReportingDate,
+        measure: Measure,
+        categoryID: Category.ID?,
+        payeeName: String?
+    ) throws -> ComparisonResult {
+        let ranges = monthComparisonRanges(on: today)
         let query = ReportQuery(measure: measure, categoryID: categoryID, payeeName: payeeName)
-        let earlierCents = try sum(query: query, range: earlierRange)
-        let laterCents = try sum(query: query, range: laterRange)
+        let earlierCents = try sum(query: query, range: ranges.previousSameDays)
+        let laterCents = try sum(query: query, range: ranges.current)
         let change = laterCents - earlierCents
         let percentage: Double? = earlierCents == 0 ? nil : (Double(change) / Double(earlierCents)) * 100
         return ComparisonResult(
-            earlier: PeriodAmount(range: earlierRange, cents: earlierCents),
-            later: PeriodAmount(range: laterRange, cents: laterCents),
+            earlier: PeriodAmount(range: ranges.previousSameDays, cents: earlierCents),
+            later: PeriodAmount(range: ranges.current, cents: laterCents),
             absoluteChangeCents: change,
             percentageChange: percentage,
-            unequalLengths: earlierEndDay != today.day
+            unequalLengths: ranges.unequalLengths
         )
     }
 
