@@ -4,12 +4,16 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] The Ledger core is a Swift package whose public interface is the only seam tests use; tests run against a real in-memory SQLite database
-- [ ] Amounts are stored as integer EUR cents; the reporting date is a calendar date that does not shift with the device's time zone
-- [ ] Every record has a globally unique stable identity
-- [ ] Saving is blocked until amount, kind, counterparty, reporting date and category are set
-- [ ] The 26 owner categories are seeded, with names trimmed of surrounding spaces
-- [ ] The current-month spending total equals the hand-computed sum of a fixture, to the cent
+- [x] The Ledger core is a Swift package whose public interface is the only seam tests use; tests run against a real in-memory SQLite database
+- [x] Amounts are stored as integer EUR cents; the reporting date is a calendar date that does not shift with the device's time zone
+- [x] Every record has a globally unique stable identity
+- [x] Saving is blocked until amount, kind, counterparty, reporting date and category are set
+- [x] The 26 owner categories are seeded, with names trimmed of surrounding spaces
+- [x] The current-month spending total equals the hand-computed sum of a fixture, to the cent
 - [ ] The app builds and runs on iOS 26 (iPhone Air) and macOS 26
+
+## Comments
+
+iOS was not built because there is no iOS SDK.
