@@ -64,8 +64,10 @@ public final class Ledger {
     }
 
     public func record(_ draft: EntryDraft) throws -> Transaction {
-        guard let amount = draft.amount,
-              let kind = draft.kind,
+        guard let amount = draft.amount else {
+            throw RecordEntryError.incomplete([.amount])
+        }
+        guard let kind = draft.kind,
               let counterpartyName = draft.counterparty,
               let reportingDate = draft.reportingDate,
               let categoryID = draft.categoryID

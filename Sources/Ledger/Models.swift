@@ -116,6 +116,18 @@ public struct Transaction: Hashable, Sendable, Identifiable {
     }
 }
 
+public enum EntryField: String, Hashable, Sendable {
+    case amount
+    case kind
+    case counterparty
+    case reportingDate
+    case category
+}
+
+public enum RecordEntryError: Error, Equatable {
+    case incomplete(Set<EntryField>)
+}
+
 public struct EntryDraft: Equatable, Sendable {
     public var amount: Cents?
     public var kind: Kind?
