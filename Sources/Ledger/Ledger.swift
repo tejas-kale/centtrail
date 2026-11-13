@@ -117,6 +117,29 @@ public final class Ledger {
         )
     }
 
+    public func runReport(_ operation: ReportOperation, today: ReportingDate) throws -> ReportResult {
+        switch operation {
+        case .currentMonthSpending:
+            let bounds = monthBounds(containing: today)
+            let rows = try connection.query(
+                """
+                SELECT COALESCE(SUM(amount_cents), 0)
+                FROM entry
+                WHERE kind = ?
+                  AND reporting_date >= ?
+                  AND reporting_date < ?
+                """,
+                bindings: [
+                    .text(Kind.expense.rawValue),
+                    .text(bounds.start),
+                    .text(bounds.end),
+                ]
+            )
+            let total = rows.first?.first?.integer ?? 0
+            return .spendingTotal(Cents(Int(total)))
+        }
+    }
+
     public func transactions() throws -> [Transaction] {
         let rows = try connection.query(
             """
@@ -157,6 +180,17 @@ public final class Ledger {
                 category: Category(id: Category.ID(rawValue: categoryID), name: categoryName)
             )
         }
+    }
+
+    private func monthBounds(containing today: ReportingDate) -> (start: String, end: String) {
+        let start = String(format: "%04d-%02d-01", today.year, today.month)
+        let end: String
+        if today.month == 12 {
+            end = String(format: "%04d-01-01", today.year + 1)
+        } else {
+            end = String(format: "%04d-%02d-01", today.year, today.month + 1)
+        }
+        return (start, end)
     }
 
     private func findOrCreateCounterparty(named name: String) throws -> UUID {

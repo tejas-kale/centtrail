@@ -124,6 +124,14 @@ public enum EntryField: String, Hashable, Sendable {
     case category
 }
 
+public enum ReportOperation: Hashable, Sendable {
+    case currentMonthSpending
+}
+
+public enum ReportResult: Hashable, Sendable {
+    case spendingTotal(Cents)
+}
+
 public enum RecordEntryError: Error, Equatable {
     case incomplete(Set<EntryField>)
     case unknownCategory
