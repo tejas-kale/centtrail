@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Deleting an entry moves it to trash with a trashed-on date
 - [ ] Restoring an entry from trash returns it to reports unchanged

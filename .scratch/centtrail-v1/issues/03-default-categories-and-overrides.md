@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Capture pre-fills the category from the counterparty's default category
 - [ ] An entry records whether its category is inherited or overridden, even when both name the same category

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Create and edit on one device appear on the other, both signed in to the same iCloud account
 - [ ] Capture while offline saves locally and syncs once the device is back online
