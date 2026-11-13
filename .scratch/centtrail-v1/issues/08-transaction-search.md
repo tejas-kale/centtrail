@@ -6,13 +6,11 @@
 
 **Status:** ledger implemented
 
-- [ ] Search filters by counterparty (including via confirmed alias), category, date range and amount conditions
+- [x] Search filters by counterparty (including via confirmed alias), category, date range and amount conditions
 - [ ] Results show as a transaction list; tapping a result opens the entry
 - [x] Trashed entries never appear
 - [ ] User-supplied values are bound parameters; filters and grouping come only from application-owned definitions
 
 ## Comments
 
-A confirmed alias and a greater-than amount are tested, and trashed entries are excluded. Category, date range and the other amount conditions are implemented on the ledger and have no test yet. The reports screen only offers a vendor field and an "over euros" field.
-Opening a result is a navigation link to the entry. It has not been checked on a device.
-Ledger queries bind counterparty names, category ids and amounts, and the filter and grouping clauses are fixed in the app. Tests do not read SQL, so that item stays open.
+The reports screen filters by vendor, an "over euros" amount, category, and an inclusive from/to date range. Ledger tests cover category alone, the date range including both endpoints, the two together, and vendor plus "over euros" composed with them. A confirmed alias and trashed entries stay covered by the existing search test. Equal, less-than, at-least and at-most amount conditions are implemented on the ledger and still have no dedicated test. Opening a result is a navigation link and has not been checked on a device. Ledger queries bind counterparty names, category ids, dates and amounts, and the filter and grouping clauses are fixed in the app. Tests do not read SQL, so that item stays open.
