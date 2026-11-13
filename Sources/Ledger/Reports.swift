@@ -1,11 +1,7 @@
 import Foundation
 
 private let spendingExpression = """
-CASE
-    WHEN entry.kind = 'expense' AND entry_category.counts_as_spending = 1 THEN entry.amount_cents
-    WHEN entry.kind = 'refund' AND entry_category.counts_as_spending = 1 THEN -entry.amount_cents
-    ELSE 0
-END
+CASE WHEN entry.kind = 'expense' AND entry_category.counts_as_spending = 1 THEN entry.amount_cents ELSE 0 END
 """
 
 private let incomeExpression = """

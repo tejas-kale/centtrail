@@ -8,7 +8,6 @@ SELECT
     entry.reporting_date,
     entry.category_provenance,
     entry.note,
-    entry.original_entry_id,
     entry.trashed_on,
     counterparty.id,
     counterparty.name,
@@ -33,15 +32,14 @@ extension Ledger {
         reportingDate: ReportingDate,
         categoryID: Category.ID,
         provenance: CategoryProvenance,
-        note: String?,
-        originalPurchaseID: UUID?
+        note: String?
     ) throws {
         try connection.execute(
             """
             INSERT INTO entry (
                 id, amount_cents, kind, counterparty_id, reporting_date, category_id,
-                category_provenance, note, original_entry_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                category_provenance, note
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             bindings: [
                 .text(stored(id)),
@@ -52,7 +50,6 @@ extension Ledger {
                 .text(stored(categoryID.rawValue)),
                 .text(provenance.rawValue),
                 note.map(SQLiteValue.text) ?? .null,
-                originalPurchaseID.map { .text(stored($0)) } ?? .null,
             ]
         )
     }
@@ -71,22 +68,21 @@ extension Ledger {
     }
 
     func decodeTransaction(_ row: [SQLiteValue]) throws -> Transaction {
-        guard row.count == 16,
+        guard row.count == 15,
               let entryID = row[0].text.flatMap(UUID.init(uuidString:)),
               let cents = row[1].integer,
               let kind = row[2].text.flatMap(Kind.init(rawValue:)),
               let reportingDate = row[3].text.flatMap(ReportingDate.init(iso8601:)),
               let provenance = row[4].text.flatMap(CategoryProvenance.init(rawValue:)),
-              let payeeID = row[8].text.flatMap(UUID.init(uuidString:)),
-              let payeeName = row[9].text,
-              let categoryID = row[13].text.flatMap(UUID.init(uuidString:)),
-              let categoryName = row[14].text,
-              let categorySpending = row[15].integer
+              let payeeID = row[7].text.flatMap(UUID.init(uuidString:)),
+              let payeeName = row[8].text,
+              let categoryID = row[12].text.flatMap(UUID.init(uuidString:)),
+              let categoryName = row[13].text,
+              let categorySpending = row[14].integer
         else {
             throw LedgerError(message: "The ledger returned an entry it could not read.")
         }
         let note = row[5].text
-        let original = row[6].text.flatMap(UUID.init(uuidString:)).map(Transaction.ID.init(rawValue:))
         return Transaction(
             id: Transaction.ID(rawValue: entryID),
             amount: Cents(Int(cents)),
@@ -94,7 +90,7 @@ extension Ledger {
             payee: Payee(
                 id: Payee.ID(rawValue: payeeID),
                 name: payeeName,
-                defaultCategory: try category(idText: row[10].text, name: row[11].text, spending: row[12].integer)
+                defaultCategory: try category(idText: row[9].text, name: row[10].text, spending: row[11].integer)
             ),
             reportingDate: reportingDate,
             category: Category(
@@ -103,8 +99,7 @@ extension Ledger {
                 countsAsSpending: categorySpending != 0
             ),
             categoryProvenance: provenance,
-            note: note,
-            originalPurchaseID: original
+            note: note
         )
     }
 
@@ -167,8 +162,6 @@ extension Ledger {
                 SET category_id = ?
                 WHERE counterparty_id = ?
                   AND category_provenance = 'inherited'
-                  AND original_entry_id IS NULL
-                  AND kind != 'refund'
                 """,
                 bindings: [.text(stored(categoryID.rawValue)), .text(stored(payeeID.rawValue))]
             )
@@ -176,7 +169,6 @@ extension Ledger {
                 "DELETE FROM proposed_payee_default WHERE counterparty_id = ?",
                 bindings: [.text(stored(payeeID.rawValue))]
             )
-            try refreshLinkedRefundCategories()
             try connection.execute("COMMIT")
         } catch {
             try? connection.execute("ROLLBACK")
@@ -197,7 +189,6 @@ extension Ledger {
                 """,
                 bindings: [.text(stored(categoryID.rawValue)), .text(stored(entryID.rawValue))]
             )
-            try refreshLinkedRefundCategories()
             try connection.execute("COMMIT")
         } catch {
             try? connection.execute("ROLLBACK")
@@ -258,22 +249,6 @@ extension Ledger {
             try? connection.execute("ROLLBACK")
             throw error
         }
-    }
-
-    func refreshLinkedRefundCategories() throws {
-        try connection.execute(
-            """
-            UPDATE entry
-            SET category_id = (
-                SELECT purchase.category_id FROM entry AS purchase
-                WHERE purchase.id = entry.original_entry_id
-            )
-            WHERE original_entry_id IS NOT NULL
-              AND EXISTS (
-                SELECT 1 FROM entry AS purchase WHERE purchase.id = entry.original_entry_id
-              )
-            """
-        )
     }
 
     public func trash(_ id: Transaction.ID, on date: ReportingDate) throws {

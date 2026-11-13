@@ -18,7 +18,6 @@ final class CaptureModel: ObservableObject {
     @Published var payee = ""
     @Published var reportingDateText = ""
     @Published var categoryID: LedgerCategoryID?
-    @Published var originalPurchaseID: LedgerTransaction.ID?
     @Published var categories: [LedgerCategory] = []
     @Published var transactions: [LedgerTransaction] = []
     @Published var spendingCents = 0
@@ -45,7 +44,6 @@ final class CaptureModel: ObservableObject {
         payee = ""
         reportingDateText = ""
         categoryID = nil
-        originalPurchaseID = nil
         sentence = ""
         categoryChosenManually = false
         message = nil
@@ -105,8 +103,7 @@ final class CaptureModel: ObservableObject {
             kind: kind,
             payee: payee,
             reportingDate: ReportingDate(iso8601: reportingDateText),
-            categoryID: categoryID,
-            originalPurchaseID: kind == .refund ? originalPurchaseID : nil
+            categoryID: categoryID
         )
         do {
             _ = try ledger.record(draft)
@@ -166,38 +163,21 @@ struct CaptureScreen: View {
                         Text("Select").tag(Optional<Kind>.none)
                         Text("Expense").tag(Optional(Kind.expense))
                         Text("Income").tag(Optional(Kind.income))
-                        Text("Refund").tag(Optional(Kind.refund))
                         Text("Transfer").tag(Optional(Kind.transfer))
-                        Text("Repayment").tag(Optional(Kind.repayment))
                     }
-                    .onChange(of: model.kind) { _, newKind in
-                        if newKind != .refund { model.originalPurchaseID = nil }
-                    }
-                    if model.kind == .refund {
-                        Picker("Original purchase", selection: $model.originalPurchaseID) {
-                            Text("None").tag(Optional<LedgerTransaction.ID>.none)
-                            ForEach(model.transactions.filter { $0.kind == .expense }) { purchase in
-                                Text(purchaseLabel(purchase)).tag(Optional(purchase.id))
-                            }
-                        }
-                    }
-                    if model.kind != .refund || model.originalPurchaseID == nil {
-                        TextField("Payee", text: $model.payee, prompt: Text("Who was paid"))
-                            .onChange(of: model.payee) { _, _ in model.prefillCategory() }
-                    }
+                    TextField("Payee", text: $model.payee, prompt: Text("Who was paid"))
+                        .onChange(of: model.payee) { _, _ in model.prefillCategory() }
                     HStack {
                         TextField("Reporting date", text: $model.reportingDateText, prompt: Text("YYYY-MM-DD"))
                         Button("Today", action: model.useToday)
                     }
-                    if model.kind != .refund || model.originalPurchaseID == nil {
-                        Picker("Category", selection: $model.categoryID) {
-                            Text("Select").tag(Optional<LedgerCategoryID>.none)
-                            ForEach(model.categories) { category in
-                                Text(category.name).tag(Optional(category.id))
-                            }
+                    Picker("Category", selection: $model.categoryID) {
+                        Text("Select").tag(Optional<LedgerCategoryID>.none)
+                        ForEach(model.categories) { category in
+                            Text(category.name).tag(Optional(category.id))
                         }
-                        .onChange(of: model.categoryID) { _, _ in model.noteManualCategory() }
                     }
+                    .onChange(of: model.categoryID) { _, _ in model.noteManualCategory() }
                     if let message = model.message {
                         Text(message)
                             .foregroundStyle(.red)
@@ -229,10 +209,6 @@ struct CaptureScreen: View {
             .navigationTitle("Centtrail")
         }
     }
-}
-
-private func purchaseLabel(_ purchase: LedgerTransaction) -> String {
-    "\(purchase.payee.name) · \(signedEuro(purchase.amount.value)) · \(purchase.reportingDate.iso8601)"
 }
 
 public struct CaptureRoot: View {
@@ -338,8 +314,6 @@ private func refusalMessage(_ error: RecordEntryError) -> String {
         return "Choose one of the owner's categories."
     case .unknownEntry:
         return "That entry could not be found."
-    case .linkedRefundNeedsPurchase:
-        return "Choose the purchase this refund belongs to."
     }
 }
 

@@ -41,9 +41,7 @@ public struct Cents: Hashable, Sendable {
 public enum Kind: String, Hashable, Sendable {
     case expense
     case income
-    case refund
     case transfer
-    case repayment
 }
 
 public enum CategoryProvenance: String, Hashable, Sendable {
@@ -170,7 +168,6 @@ public struct Transaction: Hashable, Sendable, Identifiable {
     public let category: Category
     public let categoryProvenance: CategoryProvenance
     public let note: String?
-    public let originalPurchaseID: ID?
 
     public struct ID: Hashable, Sendable {
         public let rawValue: UUID
@@ -188,8 +185,7 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         reportingDate: ReportingDate,
         category: Category,
         categoryProvenance: CategoryProvenance = .inherited,
-        note: String? = nil,
-        originalPurchaseID: ID? = nil
+        note: String? = nil
     ) {
         self.id = id
         self.amount = amount
@@ -199,7 +195,6 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         self.category = category
         self.categoryProvenance = categoryProvenance
         self.note = note
-        self.originalPurchaseID = originalPurchaseID
     }
 }
 
@@ -340,7 +335,6 @@ public enum RecordEntryError: Error, Equatable {
     case incomplete(Set<EntryField>)
     case unknownCategory
     case unknownEntry
-    case linkedRefundNeedsPurchase
 }
 
 public struct EntryDraft: Equatable, Sendable {
@@ -357,8 +351,7 @@ public struct EntryDraft: Equatable, Sendable {
         reportingDate: ReportingDate? = nil,
         categoryID: Category.ID? = nil,
         overridesCategory: Bool = false,
-        note: String? = nil,
-        originalPurchaseID: Transaction.ID? = nil
+        note: String? = nil
     ) {
         self.amount = amount
         self.kind = kind
@@ -367,10 +360,8 @@ public struct EntryDraft: Equatable, Sendable {
         self.categoryID = categoryID
         self.overridesCategory = overridesCategory
         self.note = note
-        self.originalPurchaseID = originalPurchaseID
     }
 
     public var overridesCategory: Bool
     public var note: String?
-    public var originalPurchaseID: Transaction.ID?
 }

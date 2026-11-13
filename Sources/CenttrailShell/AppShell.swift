@@ -17,37 +17,8 @@ struct TransactionDetail: View {
             if let note = transaction.note, !note.isEmpty {
                 LabeledContent("Note", value: note)
             }
-            if let purchase = originalPurchase {
-                Section("Original purchase") {
-                    NavigationLink {
-                        TransactionDetail(transaction: purchase, ledger: ledger)
-                    } label: {
-                        Text("\(purchase.payee.name) · \(signedEuro(purchase.amount.value)) · \(purchase.reportingDate.iso8601)")
-                    }
-                }
-            }
-            if !linkedRefunds.isEmpty {
-                Section("Refunds") {
-                    ForEach(linkedRefunds) { refund in
-                        NavigationLink {
-                            TransactionDetail(transaction: refund, ledger: ledger)
-                        } label: {
-                            Text("\(signedEuro(refund.amount.value)) · \(refund.reportingDate.iso8601)")
-                        }
-                    }
-                }
-            }
         }
         .navigationTitle(transaction.payee.name)
-    }
-
-    private var originalPurchase: LedgerTransaction? {
-        guard let id = transaction.originalPurchaseID else { return nil }
-        return try? ledger.transaction(id: id)
-    }
-
-    private var linkedRefunds: [LedgerTransaction] {
-        (try? ledger.linkedRefunds(for: transaction.id)) ?? []
     }
 }
 
