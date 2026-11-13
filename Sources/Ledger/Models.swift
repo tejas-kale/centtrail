@@ -126,6 +126,7 @@ public enum EntryField: String, Hashable, Sendable {
 
 public enum RecordEntryError: Error, Equatable {
     case incomplete(Set<EntryField>)
+    case unknownCategory
 }
 
 public struct EntryDraft: Equatable, Sendable {

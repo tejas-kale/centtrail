@@ -169,7 +169,7 @@ public final class Ledger {
             bindings: [.text(stored(id.rawValue))]
         )
         guard let name = rows.first?.first?.text else {
-            throw LedgerError(message: "Unknown category.")
+            throw RecordEntryError.unknownCategory
         }
         return Category(id: id, name: name)
     }
