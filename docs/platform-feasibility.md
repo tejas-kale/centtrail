@@ -40,6 +40,29 @@ The FAQ and FetchDescriptor content were returned as page extracts; the remainin
 
 These findings came from Kagi's indexed repository, source, and maintainer-discussion excerpts. No dependency has been installed and no sync prototype has been run.
 
+## SQLiteData + CloudKit evaluation (2026-11-14)
+
+- **Package & toolchain compatibility**: `pointfreeco/sqlite-data` supports Swift 6 (`Package@swift-6.0.swift` / `Package@swift-6.1.swift`) and declares support from iOS 17 / macOS 14, which is compatible with Centtrail's `.macOS("26.0")` and `.iOS("26.0")` package targets.
+- **Schema limits for `SyncEngine`**:
+  - **Globally unique primary keys**: Every synced table requires a globally unique primary key (`UUID` / `UUIDv7`, `TEXT PRIMARY KEY NOT NULL`).
+  - **No non-PK `UNIQUE` constraints**: `SyncEngine` inspects table pragmas and rejects any `UNIQUE` index/constraint on non-primary-key columns (*"Uniqueness constraints are not supported for synchronized tables."*). In Centtrail's current `Ledger` schema, `category.name`, `counterparty.name` (Payee), and `counterparty_alias.name` have `UNIQUE` constraints that must be dropped from synced DDL and handled at the application layer (e.g., deterministic UUIDs for seeded categories and merge/deduplication on lookup).
+  - **Foreign keys & `ON DELETE` actions**: Foreign keys are supported—`SyncEngine` topologically sorts batches and caches/retries child records that arrive before their parent—but `ON DELETE RESTRICT` and `ON DELETE NO ACTION` are rejected (*"Foreign key action not supported. Must be 'CASCADE', 'SET DEFAULT' or 'SET NULL'."*). Synced foreign keys (e.g., `entry.counterparty_id`, `entry.category_id`, `counterparty_alias.counterparty_id`, `proposed_payee_default`) must specify `ON DELETE CASCADE`, `ON DELETE SET NULL`, or `ON DELETE SET DEFAULT`.
+  - **Required fields & defaults**: Synced `NOT NULL` columns should carry safe `DEFAULT` values or be populated prior to insert so out-of-order or migrated records remain valid, and column names must avoid CloudKit-reserved metadata fields.
+- **Conflict resolution & domain sync behavior**:
+  - **Field-wise last-edit-wins (LWW)**: `SyncEngine` tracks per-column edit timestamps and merges concurrent edits column-by-column, preserving independent edits to different fields on the same row while resolving same-field conflicts to the latest edit without prompting.
+  - **Trash/restore**: Because `entry.trashed_on` is an independent column, trashing or restoring an entry syncs via field-wise LWW without clobbering unrelated fields.
+  - **Payee default + per-entry override**: Because `counterparty.default_category_id` and `entry.category_id` / `entry.category_provenance` live on separate tables/columns, changing a payee's default category on one device while setting a per-entry `override` on another device preserves both the new default (for inherited entries) and the explicit override.
+
+### Manual two-device verification checklist (iPhone Air & Mac)
+
+Live CloudKit sync requires signed app targets with iCloud/CloudKit entitlements, the Remote Notifications background mode, and two physical devices under the same iCloud account. None of these manual steps were executed in this CLI session; the owner should verify them on iPhone Air and Mac once ticket 04 wires `SyncEngine` into the app:
+
+- [ ] **Minimal schema sync**: Launch the signed build on both iPhone Air and Mac under the same iCloud account; create a category, payee, and entry on one device and confirm they appear on the other.
+- [ ] **Offline create, edit, and delete**: Put one device offline; create a new entry, edit an existing entry's amount or note, and delete another entry; reconnect and confirm all three changes appear on the other device.
+- [ ] **Same-field conflict (field-wise LWW)**: With both devices offline, edit the same field (e.g., `note` or `amount_cents`) on the same entry on both devices at different times; reconnect both and confirm the latest edit wins without prompting, while edits to different fields on the same entry are both preserved.
+- [ ] **Trash and restore**: Trash an entry on iPhone Air and confirm it leaves active lists/reports on Mac; restore it from Trash on Mac and confirm it returns on iPhone Air.
+- [ ] **Payee default + per-entry override**: Change a payee's default category on Mac while setting a per-entry category override on one of that payee's entries on iPhone Air; sync both and confirm inherited entries adopt the new default while the overridden entry keeps its override.
+
 ## Local validation boundary
 
-The current workspace runs on Linux, with neither `swift` nor `xcodebuild` on PATH (checked 2026-11-11). Apple framework, iCloud, and on-device model validation must run in an Apple development environment; none has been performed in this session. The owner selected SQLiteData as the first evaluation candidate, not as an already validated production dependency.
+The local `swift test` suite runs and passes on macOS in this workspace, but live CloudKit two-device sync and on-device Foundation Models behavior require signed Apple app targets and physical hardware (iPhone Air and Mac) and were not run in this session.
