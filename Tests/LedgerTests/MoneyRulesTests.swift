@@ -48,6 +48,17 @@ import Testing
     }
 }
 
+@Test func aLinkedRefundStaysAttachedToItsPurchase() throws {
+    let ledger = try Ledger.openInMemory()
+    let purchase = try recordEntry(ledger, cents: 10_000, kind: .expense, counterparty: "Osteria", date: "2026-01-10", category: "Restaurant")
+    let other = try recordEntry(ledger, cents: 3000, kind: .expense, counterparty: "REWE", date: "2026-01-11", category: "Supermarket")
+    let refund = try ledger.record(EntryDraft(amount: Cents(2000), kind: .refund, reportingDate: ReportingDate(iso8601: "2026-02-04"), originalPurchaseID: purchase.id))
+    #expect(try ledger.linkedRefunds(for: purchase.id).map(\.id) == [refund.id])
+    #expect(try ledger.linkedRefunds(for: other.id).isEmpty)
+    #expect(try ledger.transaction(id: refund.id).originalPurchaseID == purchase.id)
+    #expect(try ledger.transaction(id: refund.id).category.name == "Restaurant")
+}
+
 @Test func savingsTransfersAndRepaymentsAreExcludedFromSpending() throws {
     let ledger = try Ledger.openInMemory()
     _ = try recordEntry(ledger, cents: 5_000, kind: .expense, counterparty: "REWE", date: "2026-03-01", category: "Supermarket")

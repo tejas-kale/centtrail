@@ -18,6 +18,7 @@ final class CaptureModel: ObservableObject {
     @Published var counterparty = ""
     @Published var reportingDateText = ""
     @Published var categoryID: LedgerCategoryID?
+    @Published var originalPurchaseID: LedgerTransaction.ID?
     @Published var categories: [LedgerCategory] = []
     @Published var transactions: [LedgerTransaction] = []
     @Published var spendingCents = 0
@@ -44,6 +45,7 @@ final class CaptureModel: ObservableObject {
         counterparty = ""
         reportingDateText = ""
         categoryID = nil
+        originalPurchaseID = nil
         sentence = ""
         categoryChosenManually = false
         message = nil
@@ -103,7 +105,8 @@ final class CaptureModel: ObservableObject {
             kind: kind,
             counterparty: counterparty,
             reportingDate: ReportingDate(iso8601: reportingDateText),
-            categoryID: categoryID
+            categoryID: categoryID,
+            originalPurchaseID: kind == .refund ? originalPurchaseID : nil
         )
         do {
             _ = try ledger.record(draft)
@@ -167,19 +170,34 @@ struct CaptureScreen: View {
                         Text("Transfer").tag(Optional(Kind.transfer))
                         Text("Repayment").tag(Optional(Kind.repayment))
                     }
-                    TextField("Counterparty", text: $model.counterparty, prompt: Text("Who was paid"))
-                        .onChange(of: model.counterparty) { _, _ in model.prefillCategory() }
+                    .onChange(of: model.kind) { _, newKind in
+                        if newKind != .refund { model.originalPurchaseID = nil }
+                    }
+                    if model.kind == .refund {
+                        Picker("Original purchase", selection: $model.originalPurchaseID) {
+                            Text("None").tag(Optional<LedgerTransaction.ID>.none)
+                            ForEach(model.transactions.filter { $0.kind == .expense }) { purchase in
+                                Text(purchaseLabel(purchase)).tag(Optional(purchase.id))
+                            }
+                        }
+                    }
+                    if model.kind != .refund || model.originalPurchaseID == nil {
+                        TextField("Counterparty", text: $model.counterparty, prompt: Text("Who was paid"))
+                            .onChange(of: model.counterparty) { _, _ in model.prefillCategory() }
+                    }
                     HStack {
                         TextField("Reporting date", text: $model.reportingDateText, prompt: Text("YYYY-MM-DD"))
                         Button("Today", action: model.useToday)
                     }
-                    Picker("Category", selection: $model.categoryID) {
-                        Text("Select").tag(Optional<LedgerCategoryID>.none)
-                        ForEach(model.categories) { category in
-                            Text(category.name).tag(Optional(category.id))
+                    if model.kind != .refund || model.originalPurchaseID == nil {
+                        Picker("Category", selection: $model.categoryID) {
+                            Text("Select").tag(Optional<LedgerCategoryID>.none)
+                            ForEach(model.categories) { category in
+                                Text(category.name).tag(Optional(category.id))
+                            }
                         }
+                        .onChange(of: model.categoryID) { _, _ in model.noteManualCategory() }
                     }
-                    .onChange(of: model.categoryID) { _, _ in model.noteManualCategory() }
                     if let message = model.message {
                         Text(message)
                             .foregroundStyle(.red)
@@ -194,7 +212,7 @@ struct CaptureScreen: View {
                     } else {
                         ForEach(model.transactions) { transaction in
                             NavigationLink {
-                                TransactionDetail(transaction: transaction)
+                                TransactionDetail(transaction: transaction, ledger: model.ledger)
                             } label: {
                                 TransactionRow(transaction: transaction)
                             }
@@ -211,6 +229,10 @@ struct CaptureScreen: View {
             .navigationTitle("Centtrail")
         }
     }
+}
+
+private func purchaseLabel(_ purchase: LedgerTransaction) -> String {
+    "\(purchase.counterparty.name) · \(signedEuro(purchase.amount.value)) · \(purchase.reportingDate.iso8601)"
 }
 
 public struct CaptureRoot: View {

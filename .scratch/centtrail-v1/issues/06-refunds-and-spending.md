@@ -12,3 +12,7 @@
 - [x] An unlinked refund cannot be saved without a vendor and category
 - [x] Savings entries, internal transfers and credit-card repayments are excluded from spending totals
 - [x] All spending figures match hand-computed fixtures to the cent
+
+## Comments
+
+The capture form can link a refund to an expense. The entry detail shows that link from the refund and lists the refund on the purchase. Linked refunds still use the ledger's spending rules. The screens have not been checked on a device.
