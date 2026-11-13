@@ -44,7 +44,7 @@ public final class Ledger {
             """
             CREATE TABLE IF NOT EXISTS counterparty (
                 id TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL
+                name TEXT NOT NULL UNIQUE
             )
             """
         )
@@ -81,14 +81,11 @@ public final class Ledger {
         }
 
         let category = try category(id: categoryID)
-        let counterpartyID = UUID()
         let entryID = UUID()
         try connection.execute("BEGIN")
+        let counterpartyID: UUID
         do {
-            try connection.execute(
-                "INSERT INTO counterparty (id, name) VALUES (?, ?)",
-                bindings: [.text(stored(counterpartyID)), .text(counterpartyName)]
-            )
+            counterpartyID = try findOrCreateCounterparty(named: counterpartyName)
             try connection.execute(
                 """
                 INSERT INTO entry (
@@ -160,6 +157,22 @@ public final class Ledger {
                 category: Category(id: Category.ID(rawValue: categoryID), name: categoryName)
             )
         }
+    }
+
+    private func findOrCreateCounterparty(named name: String) throws -> UUID {
+        let existing = try connection.query(
+            "SELECT id FROM counterparty WHERE name = ?",
+            bindings: [.text(name)]
+        )
+        if let idText = existing.first?.first?.text, let id = UUID(uuidString: idText) {
+            return id
+        }
+        let id = UUID()
+        try connection.execute(
+            "INSERT INTO counterparty (id, name) VALUES (?, ?)",
+            bindings: [.text(stored(id)), .text(name)]
+        )
+        return id
     }
 
     private func category(id: Category.ID) throws -> Category {

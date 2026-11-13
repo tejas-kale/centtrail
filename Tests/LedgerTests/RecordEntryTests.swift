@@ -43,14 +43,25 @@ import Testing
     #expect(Set(categoryIDs).isDisjoint(with: otherCategoryIDs))
 }
 
-private func recordExpense(_ ledger: Ledger) throws -> Transaction {
+@Test func theSameCounterpartyNameIsOneCounterparty() throws {
+    let ledger = try Ledger.openInMemory()
+    let first = try recordExpense(ledger, counterparty: " REWE ")
+    let second = try recordExpense(ledger, counterparty: "REWE")
+
+    #expect(first.counterparty.id == second.counterparty.id)
+    #expect(first.counterparty.name == "REWE")
+    #expect(second.counterparty.name == "REWE")
+    #expect(first.id != second.id)
+}
+
+private func recordExpense(_ ledger: Ledger, counterparty: String = "REWE") throws -> Transaction {
     let supermarket = try #require(try ledger.categories().first { $0.name == "Supermarket" })
     let reportingDate = try #require(ReportingDate(iso8601: "2026-11-02"))
     return try ledger.record(
         EntryDraft(
             amount: Cents(1250),
             kind: .expense,
-            counterparty: "REWE",
+            counterparty: counterparty,
             reportingDate: reportingDate,
             categoryID: supermarket.id
         )
