@@ -223,32 +223,66 @@ extension Ledger {
         try connection.execute("BEGIN")
         do {
             if let other = try resolvePayeeID(named: trimmed), other != payeeID.rawValue {
-                try connection.execute(
-                    "UPDATE entry SET counterparty_id = ? WHERE counterparty_id = ?",
-                    bindings: [.text(stored(payeeID.rawValue)), .text(stored(other))]
-                )
-                try connection.execute(
-                    "UPDATE counterparty_alias SET counterparty_id = ? WHERE counterparty_id = ?",
-                    bindings: [.text(stored(payeeID.rawValue)), .text(stored(other))]
-                )
-                try connection.execute(
-                    "DELETE FROM counterparty WHERE id = ?",
-                    bindings: [.text(stored(other))]
-                )
+                try reassignPayeeRecords(from: other, to: payeeID.rawValue)
             }
-            try connection.execute(
-                "INSERT INTO counterparty_alias (id, name, counterparty_id) VALUES (?, ?, ?)",
-                bindings: [
-                    .text(stored(UUID())),
-                    .text(trimmed),
-                    .text(stored(payeeID.rawValue)),
-                ]
-            )
+            try insertAliasIfAbsent(trimmed, for: payeeID.rawValue)
             try connection.execute("COMMIT")
         } catch {
             try? connection.execute("ROLLBACK")
             throw error
         }
+    }
+
+    /// Merges `sourceID` into `targetID`, moving all entries and aliases and
+    /// keeping the source payee's name as an alias of the surviving payee.
+    public func mergePayees(sourceID: Payee.ID, into targetID: Payee.ID) throws {
+        guard sourceID != targetID else {
+            throw LedgerError(message: "Choose two different payees to merge.")
+        }
+        let source = try requirePayee(id: sourceID.rawValue)
+        let target = try requirePayee(id: targetID.rawValue)
+        try connection.execute("BEGIN")
+        do {
+            try reassignPayeeRecords(from: source.id.rawValue, to: target.id.rawValue)
+            if source.name != target.name {
+                try insertAliasIfAbsent(source.name, for: target.id.rawValue)
+            }
+            try connection.execute("COMMIT")
+        } catch {
+            try? connection.execute("ROLLBACK")
+            throw error
+        }
+    }
+
+    private func reassignPayeeRecords(from sourceID: UUID, to targetID: UUID) throws {
+        try connection.execute(
+            "UPDATE entry SET counterparty_id = ? WHERE counterparty_id = ?",
+            bindings: [.text(stored(targetID)), .text(stored(sourceID))]
+        )
+        try connection.execute(
+            "UPDATE counterparty_alias SET counterparty_id = ? WHERE counterparty_id = ?",
+            bindings: [.text(stored(targetID)), .text(stored(sourceID))]
+        )
+        try connection.execute(
+            "DELETE FROM proposed_payee_default WHERE counterparty_id = ?",
+            bindings: [.text(stored(sourceID))]
+        )
+        try connection.execute(
+            "DELETE FROM counterparty WHERE id = ?",
+            bindings: [.text(stored(sourceID))]
+        )
+    }
+
+    private func insertAliasIfAbsent(_ name: String, for payeeID: UUID) throws {
+        let existing = try connection.query(
+            "SELECT counterparty_id FROM counterparty_alias WHERE name = ?",
+            bindings: [.text(name)]
+        )
+        guard existing.isEmpty else { return }
+        try connection.execute(
+            "INSERT INTO counterparty_alias (id, name, counterparty_id) VALUES (?, ?, ?)",
+            bindings: [.text(stored(UUID())), .text(name), .text(stored(payeeID))]
+        )
     }
 
     public func trash(_ id: Transaction.ID, on date: ReportingDate) throws {
