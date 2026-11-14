@@ -333,19 +333,6 @@ struct TransactionDetail: View {
     }
 }
 
-struct AskScreen: View {
-    var body: some View {
-        NavigationStack {
-            ContentUnavailableView(
-                "Ask",
-                systemImage: "sparkles",
-                description: Text("Ask questions about your spending in plain words. Coming soon.")
-            )
-            .navigationTitle("Ask")
-        }
-    }
-}
-
 struct SettingsScreen: View {
     @ObservedObject var model: CaptureModel
 
