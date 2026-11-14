@@ -34,6 +34,8 @@ targets:
     dependencies:
       - package: Centtrail
         product: CenttrailShell
+      - target: CenttrailControls
+        embed: true
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1"
@@ -62,3 +64,24 @@ targets:
       properties:
         # The ledger lives in the sandbox container's Application Support; no other file or network access.
         com.apple.security.app-sandbox: true
+
+  CenttrailControls:
+    type: app-extension
+    platform: iOS
+    sources:
+      - iOSControls
+    dependencies:
+      - package: Centtrail
+        product: CenttrailShell
+    settings:
+      base:
+        PRODUCT_NAME: CenttrailControls
+        PRODUCT_BUNDLE_IDENTIFIER: com.tejaskale.centtrail.controls
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        INFOPLIST_KEY_CFBundleDisplayName: Centtrail
+    info:
+      path: iOSControls/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

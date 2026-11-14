@@ -40,6 +40,48 @@ The FAQ and FetchDescriptor content were returned as page extracts; the remainin
 
 These findings came from Kagi's indexed repository, source, and maintainer-discussion excerpts. No dependency has been installed and no sync prototype has been run.
 
+## SQLiteData + CloudKit evaluation (2026-11-14)
+
+- **Package & toolchain compatibility**: `pointfreeco/sqlite-data` supports Swift 6 (`Package@swift-6.0.swift` / `Package@swift-6.1.swift`) and declares support from iOS 17 / macOS 14, which is compatible with Centtrail's `.macOS("26.0")` and `.iOS("26.0")` package targets.
+- **Schema limits for `SyncEngine`**:
+  - **Globally unique primary keys**: Every synced table requires a globally unique primary key (`UUID` / `UUIDv7`, `TEXT PRIMARY KEY NOT NULL`).
+  - **No non-PK `UNIQUE` constraints**: `SyncEngine` inspects table pragmas and rejects any `UNIQUE` index/constraint on non-primary-key columns (*"Uniqueness constraints are not supported for synchronized tables."*). In Centtrail's current `Ledger` schema, `category.name`, `counterparty.name` (Payee), and `counterparty_alias.name` have `UNIQUE` constraints that must be dropped from synced DDL and handled at the application layer (e.g., deterministic UUIDs for seeded categories and merge/deduplication on lookup).
+  - **Foreign keys & `ON DELETE` actions**: Foreign keys are supported—`SyncEngine` topologically sorts batches and caches/retries child records that arrive before their parent—but `ON DELETE RESTRICT` and `ON DELETE NO ACTION` are rejected (*"Foreign key action not supported. Must be 'CASCADE', 'SET DEFAULT' or 'SET NULL'."*). Synced foreign keys (e.g., `entry.counterparty_id`, `entry.category_id`, `counterparty_alias.counterparty_id`, `proposed_payee_default`) must specify `ON DELETE CASCADE`, `ON DELETE SET NULL`, or `ON DELETE SET DEFAULT`.
+  - **Required fields & defaults**: Synced `NOT NULL` columns should carry safe `DEFAULT` values or be populated prior to insert so out-of-order or migrated records remain valid, and column names must avoid CloudKit-reserved metadata fields.
+- **Conflict resolution & domain sync behavior**:
+  - **Field-wise last-edit-wins (LWW)**: `SyncEngine` tracks per-column edit timestamps and merges concurrent edits column-by-column, preserving independent edits to different fields on the same row while resolving same-field conflicts to the latest edit without prompting.
+  - **Trash/restore**: Because `entry.trashed_on` is an independent column, trashing or restoring an entry syncs via field-wise LWW without clobbering unrelated fields.
+  - **Payee default + per-entry override**: Because `counterparty.default_category_id` and `entry.category_id` / `entry.category_provenance` live on separate tables/columns, changing a payee's default category on one device while setting a per-entry `override` on another device preserves both the new default (for inherited entries) and the explicit override.
+
+### Manual two-device verification checklist (iPhone Air & Mac)
+
+Live CloudKit sync requires signed app targets with iCloud/CloudKit entitlements, the Remote Notifications background mode, and two physical devices under the same iCloud account. None of these manual steps were executed in this CLI session; the owner should verify them on iPhone Air and Mac once ticket 04 wires `SyncEngine` into the app:
+
+- [ ] **Minimal schema sync**: Launch the signed build on both iPhone Air and Mac under the same iCloud account; create a category, payee, and entry on one device and confirm they appear on the other.
+- [ ] **Offline create, edit, and delete**: Put one device offline; create a new entry, edit an existing entry's amount or note, and delete another entry; reconnect and confirm all three changes appear on the other device.
+- [ ] **Same-field conflict (field-wise LWW)**: With both devices offline, edit the same field (e.g., `note` or `amount_cents`) on the same entry on both devices at different times; reconnect both and confirm the latest edit wins without prompting, while edits to different fields on the same entry are both preserved.
+- [ ] **Trash and restore**: Trash an entry on iPhone Air and confirm it leaves active lists/reports on Mac; restore it from Trash on Mac and confirm it returns on iPhone Air.
+- [ ] **Payee default + per-entry override**: Change a payee's default category on Mac while setting a per-entry category override on one of that payee's entries on iPhone Air; sync both and confirm inherited entries adopt the new default while the overridden entry keeps its override.
+
+## Ask on Apple Foundation Models evaluation (2026-11-14)
+
+- **Runtime availability & fallback**: `AppleFoundationModelBackend` reads `SystemLanguageModel.default.availability` at runtime (`.available`, `.unavailable(.deviceNotEligible)`, `.unavailable(.appleIntelligenceNotEnabled)`, `.unavailable(.modelNotReady)`). When unavailable, `Interpreter` falls back to `KeywordLanguageModelBackend` and `AskScreen` displays a reason-specific note alongside the preset chips; when available, no unavailable note is shown.
+- **Guided generation & validation**: `AppleFoundationModelBackend` uses `LanguageModelSession` with `@Generable` (`GeneratedReportIntent` and `GeneratedCaptureDraft`). Every generated intent is validated before execution: inverted or incomplete date ranges, negative/invalid amounts, and unknown categories or payees become plain explanations (`.unsupported`), ambiguous names trigger `.clarification`, and mutation requests are refused.
+- **Evaluation set results (`Tests/LedgerTests/AskEvaluationTests.swift`)**:
+  - **12 representative questions** covering totals (spending/income, current/last month), breakdowns (`category`, `month`, `monthAndCategory`), comparisons, searches with amount filters, ambiguous payee clarification (`Amazon` vs `Amazon Fresh`), out-of-scope questions (`what is my net worth?`), and mutation refusals (`delete all my transactions`).
+  - **Keyword fallback (`KeywordLanguageModelBackend`)**: 12/12 operation accuracy, 12/12 argument accuracy.
+  - **Foundation Models schema + validator (`AppleFoundationModelBackend` with injected `@Generable` fixtures)**: 12/12 operation accuracy, 12/12 argument accuracy, plus verified rejection of invalid date ranges, negative amounts, and unknown categories.
+  - **Host environment**: On this macOS build host, `SystemLanguageModel.default.availability` reports `.unavailable(.deviceNotEligible)`, so live on-device model inference did not execute here.
+
+### Physical iPhone Air timing & accuracy checklist (5–7 second target)
+
+Physical iPhone Air timings (cold and warm end-to-end latency) and live on-device Apple Intelligence accuracy must be measured on device:
+
+- [ ] **Availability check on device**: With Apple Intelligence enabled on iPhone Air, open Ask and confirm the unavailable note is hidden (`unavailableNote == nil`). Toggle Apple Intelligence off in Settings and confirm the unavailable note appears with the expected reason and preset chips still work.
+- [ ] **Cold end-to-end timing (5–7 s target)**: Force-quit and relaunch Centtrail on iPhone Air; submit a representative Ask question (e.g. `"how much did I spend this month?"`) and record wall-clock time from send tap to rendered answer card. Target: `<= 5–7 s`.
+- [ ] **Warm end-to-end timing (5–7 s target)**: Immediately submit a second question in the same session (e.g. `"spent on restaurants compared with last month"`) and record wall-clock time from send tap to rendered answer card. Target: `<= 5–7 s`.
+- [ ] **Live evaluation set run**: Run `appleFoundationModelLiveSmokeAndTimingWhenAvailable` (and the 12-question evaluation set against `AppleFoundationModelBackend()`) on an Apple Intelligence-enabled device and record observed operation/argument accuracy and cold/warm timings here.
+
 ## Local validation boundary
 
-The current workspace runs on Linux, with neither `swift` nor `xcodebuild` on PATH (checked 2026-11-11). Apple framework, iCloud, and on-device model validation must run in an Apple development environment; none has been performed in this session. The owner selected SQLiteData as the first evaluation candidate, not as an already validated production dependency.
+The local `swift test` suite runs and passes on macOS in this workspace, but live CloudKit two-device sync and on-device Foundation Models behavior require signed Apple app targets and physical hardware (iPhone Air and Mac) and were not run in this session.

@@ -1,6 +1,5 @@
 import Combine
 import Foundation
-import Interpreter
 import Ledger
 import SwiftUI
 
@@ -14,67 +13,81 @@ final class CaptureModel: ObservableObject {
     let today: ReportingDate
 
     @Published var amountText = ""
-    @Published var kind: Kind?
+    @Published var kind: Kind = .expense
     @Published var payee = ""
-    @Published var reportingDateText = ""
+    @Published var selectedDate: Date
     @Published var categoryID: LedgerCategoryID?
     @Published var categories: [LedgerCategory] = []
+    @Published var payees: [Payee] = []
     @Published var transactions: [LedgerTransaction] = []
-    @Published var spendingCents = 0
-    @Published var message: String?
-    @Published var sentence = ""
-    @Published var modelNotice: String?
+    @Published var homeSummary: HomeSummary?
+    @Published var isPresentingAddSheet = false
+    @Published var draftMessage: String?
+    @Published var errorMessage: String?
+
     private var applyingPrefill = false
     private var categoryChosenManually = false
+    nonisolated(unsafe) private var newEntryObserver: NSObjectProtocol?
 
     init(ledger: Ledger, today: ReportingDate) throws {
         self.ledger = ledger
         self.today = today
+        self.selectedDate = Self.date(from: today)
         try reload()
-        NotificationCenter.default.addObserver(forName: .centtrailNewEntry, object: nil, queue: .main) { [weak self] _ in
+        newEntryObserver = NotificationCenter.default.addObserver(forName: .centtrailNewEntry, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.clearDraft()
+                guard let self else { return }
+                _ = CenttrailEntryTrigger.shared.consumePendingNewEntry()
+                self.openAddSheet()
             }
         }
+        if CenttrailEntryTrigger.shared.consumePendingNewEntry() {
+            openAddSheet()
+        }
+    }
+
+    deinit {
+        if let newEntryObserver {
+            NotificationCenter.default.removeObserver(newEntryObserver)
+        }
+    }
+
+    func openAddSheet() {
+        clearDraft()
+        isPresentingAddSheet = true
     }
 
     func clearDraft() {
         amountText = ""
-        kind = nil
+        kind = .expense
         payee = ""
-        reportingDateText = ""
+        selectedDate = Self.date(from: today)
         categoryID = nil
-        sentence = ""
         categoryChosenManually = false
-        message = nil
+        draftMessage = nil
     }
 
     func prefillCategory() {
         guard !categoryChosenManually else { return }
-        guard let category = try? ledger.defaultCategory(forPayeeName: payee) else { return }
-        applyingPrefill = true
-        categoryID = category.id
-        applyingPrefill = false
+        do {
+            guard let category = try ledger.defaultCategory(forPayeeName: payee) else { return }
+            applyingPrefill = true
+            categoryID = category.id
+            applyingPrefill = false
+        } catch {
+            draftMessage = error.localizedDescription
+        }
+    }
+
+    func selectSuggestedPayee(_ name: String) {
+        payee = name
+        prefillCategory()
     }
 
     func noteManualCategory() {
-        if !applyingPrefill { categoryChosenManually = true }
-    }
-
-    func applySentence() {
-        let interpreter = Interpreter(ledger: ledger, today: today, modelUnavailableReason: .modelNotReady)
-        modelNotice = "Apple Intelligence is unavailable. The short form stays open, and Centtrail filled what it could from the sentence."
-        guard let parsed = try? interpreter.interpretCapture(sentence) else { return }
-        if let amount = parsed.draft.amount {
-            amountText = String(format: "%d.%02d", amount.value / 100, amount.value % 100)
+        if !applyingPrefill {
+            categoryChosenManually = true
         }
-        kind = parsed.draft.kind
-        if let name = parsed.draft.payee { payee = name }
-        if let date = parsed.draft.reportingDate { reportingDateText = date.iso8601 }
-        applyingPrefill = true
-        categoryID = parsed.draft.categoryID
-        applyingPrefill = false
-        categoryChosenManually = parsed.draft.overridesCategory
     }
 
     static func openDefault() throws -> CaptureModel {
@@ -93,26 +106,47 @@ final class CaptureModel: ObservableObject {
         return try CaptureModel(ledger: ledger, today: today)
     }
 
-    func useToday() {
-        reportingDateText = today.iso8601
-    }
-
-    func save() {
+    @discardableResult
+    func save() -> Bool {
         let draft = EntryDraft(
             amount: Cents(euroText: amountText),
             kind: kind,
             payee: payee,
-            reportingDate: ReportingDate(iso8601: reportingDateText),
-            categoryID: categoryID
+            reportingDate: civilDate(selectedDate, calendar: .current),
+            categoryID: categoryID,
+            overridesCategory: categoryChosenManually
         )
         do {
             _ = try ledger.record(draft)
             clearDraft()
             try reload()
+            return true
         } catch let error as RecordEntryError {
-            message = refusalMessage(error)
+            draftMessage = refusalMessage(error)
+            return false
         } catch {
-            message = error.localizedDescription
+            draftMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func trash(_ transaction: LedgerTransaction) {
+        do {
+            try ledger.trash(transaction.id, on: today)
+            try reload()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func updateCategory(_ newCategoryID: LedgerCategoryID, for transactionID: LedgerTransaction.ID) {
+        do {
+            try ledger.setCategory(newCategoryID, for: transactionID)
+            try reload()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -121,93 +155,19 @@ final class CaptureModel: ObservableObject {
     }
 
     private func reload() throws {
+        try ledger.purgeExpiredTrash(today: today)
         categories = try ledger.categories()
+        payees = try ledger.payees()
         transactions = try ledger.transactions()
-        switch try ledger.runReport(.currentMonthSpending, today: today) {
-        case .spendingTotal(let cents):
-            spendingCents = cents.value
-        default:
-            break
-        }
+        homeSummary = try ledger.homeSummary(on: today)
     }
-}
 
-struct CaptureScreen: View {
-    @ObservedObject var model: CaptureModel
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    LabeledContent("This month", value: signedEuro(model.spendingCents))
-                } footer: {
-                    Text(monthTitle(model.today))
-                }
-
-                Section("Sentence") {
-                    if let modelNotice = model.modelNotice {
-                        Text(modelNotice)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    TextField("20 at Middle Eats yesterday", text: $model.sentence)
-                    Button("Fill draft", action: model.applySentence)
-                }
-
-                Section("New entry") {
-                    TextField("Amount", text: $model.amountText, prompt: Text("0.00"))
-                        #if os(iOS)
-                        .keyboardType(.decimalPad)
-                        #endif
-                    Picker("Kind", selection: $model.kind) {
-                        Text("Select").tag(Optional<Kind>.none)
-                        Text("Expense").tag(Optional(Kind.expense))
-                        Text("Income").tag(Optional(Kind.income))
-                        Text("Transfer").tag(Optional(Kind.transfer))
-                    }
-                    TextField("Payee", text: $model.payee, prompt: Text("Who was paid"))
-                        .onChange(of: model.payee) { _, _ in model.prefillCategory() }
-                    HStack {
-                        TextField("Reporting date", text: $model.reportingDateText, prompt: Text("YYYY-MM-DD"))
-                        Button("Today", action: model.useToday)
-                    }
-                    Picker("Category", selection: $model.categoryID) {
-                        Text("Select").tag(Optional<LedgerCategoryID>.none)
-                        ForEach(model.categories) { category in
-                            Text(category.name).tag(Optional(category.id))
-                        }
-                    }
-                    .onChange(of: model.categoryID) { _, _ in model.noteManualCategory() }
-                    if let message = model.message {
-                        Text(message)
-                            .foregroundStyle(.red)
-                    }
-                    Button("Save", action: model.save)
-                }
-
-                Section("Transactions") {
-                    if model.transactions.isEmpty {
-                        Text("No transactions yet")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(model.transactions) { transaction in
-                            NavigationLink {
-                                TransactionDetail(transaction: transaction, ledger: model.ledger)
-                            } label: {
-                                TransactionRow(transaction: transaction)
-                            }
-                            .swipeActions {
-                                Button("Trash", role: .destructive) {
-                                    try? model.ledger.trash(transaction.id, on: model.today)
-                                    try? model.reloadFromOutside()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Centtrail")
-        }
+    private static func date(from reportingDate: ReportingDate) -> Date {
+        var components = DateComponents()
+        components.year = reportingDate.year
+        components.month = reportingDate.month
+        components.day = reportingDate.day
+        return Calendar.current.date(from: components) ?? Date()
     }
 }
 
@@ -218,18 +178,7 @@ public struct CaptureRoot: View {
 
     public var body: some View {
         if let model = loader.model {
-            TabView {
-                CaptureScreen(model: model)
-                    .tabItem { Label("Capture", systemImage: "plus") }
-                ReportsScreen(model: model)
-                    .tabItem { Label("Reports", systemImage: "chart.bar") }
-                PeopleScreen(model: model)
-                    .tabItem { Label("People", systemImage: "person.2") }
-                TrashScreen(model: model)
-                    .tabItem { Label("Trash", systemImage: "trash") }
-                ImportScreen(model: model)
-                    .tabItem { Label("Import", systemImage: "square.and.arrow.down") }
-            }
+            AppTabShell(model: model)
         } else if let failure = loader.failure {
             ContentUnavailableView(
                 "The ledger could not be opened",
@@ -238,6 +187,28 @@ public struct CaptureRoot: View {
             )
         } else {
             ProgressView("Opening the ledger")
+        }
+    }
+}
+
+private struct AppTabShell: View {
+    @ObservedObject var model: CaptureModel
+
+    var body: some View {
+        TabView {
+            Tab("Home", systemImage: "house") {
+                HomeScreen(model: model)
+            }
+            Tab("Ask", systemImage: "sparkles") {
+                AskScreen(model: model)
+            }
+            Tab("Settings", systemImage: "gearshape") {
+                SettingsScreen(model: model)
+            }
+        }
+        .tabViewStyle(.sidebarAdaptable)
+        .sheet(isPresented: $model.isPresentingAddSheet) {
+            AddEntrySheet(model: model)
         }
     }
 }
@@ -268,12 +239,9 @@ struct TransactionRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(signedEuro(transaction.amount.value))
-                Text(transaction.kind.rawValue.capitalized)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+            Text(formatEuro(transaction.amount.value))
+                .foregroundStyle(transaction.kind == .income ? .green : .primary)
+                .monospacedDigit()
         }
     }
 }
@@ -288,10 +256,19 @@ private func civilDate(_ date: Date, calendar: Calendar) -> ReportingDate? {
     return ReportingDate(year: year, month: month, day: day)
 }
 
-func signedEuro(_ cents: Int) -> String {
-    let sign = cents < 0 ? "−" : ""
-    let absolute = abs(cents)
-    return "\(sign)€\(absolute / 100).\(String(format: "%02d", absolute % 100))"
+func formatEuro(_ cents: Int) -> String {
+    (Decimal(cents) / 100).formatted(.currency(code: "EUR"))
+}
+
+func formatSignedEuro(_ cents: Int) -> String {
+    let sign = cents > 0 ? "+" : (cents < 0 ? "−" : "")
+    let absFormatted = (Decimal(abs(cents)) / 100).formatted(.currency(code: "EUR"))
+    return "\(sign)\(absFormatted)"
+}
+
+func formatPercentageChange(_ percentage: Double) -> String {
+    let sign = percentage > 0 ? "+" : ""
+    return "\(sign)\(percentage.formatted(.number.precision(.fractionLength(0...1))))%"
 }
 
 func monthTitle(_ date: ReportingDate) -> String {
@@ -302,6 +279,26 @@ func monthTitle(_ date: ReportingDate) -> String {
     ]
     guard names.indices.contains(date.month) else { return date.iso8601 }
     return "\(names[date.month]) \(date.year)"
+}
+
+func monthName(_ date: ReportingDate) -> String {
+    let names = [
+        "",
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    ]
+    guard names.indices.contains(date.month) else { return date.iso8601 }
+    return names[date.month]
+}
+
+func shortRangeLabel(_ range: DateRange) -> String {
+    let shortMonths = [
+        "",
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    let month = shortMonths.indices.contains(range.end.month) ? shortMonths[range.end.month] : "\(range.end.month)"
+    return "\(range.start.day)–\(range.end.day) \(month)"
 }
 
 private func refusalMessage(_ error: RecordEntryError) -> String {

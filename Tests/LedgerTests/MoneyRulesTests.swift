@@ -62,3 +62,31 @@ import Testing
     #expect(try ledger.trashedEntries(today: today).isEmpty)
     #expect(throws: RecordEntryError.unknownEntry) { try ledger.transaction(id: old.id) }
 }
+
+@Test func trashedEntriesPurgeAutomaticallyAfterThirtyDaysAndRestoreUpdatesTotals() throws {
+    let ledger = try Ledger.openInMemory()
+    let kept = try recordEntry(ledger, cents: 1_000, kind: .expense, payee: "REWE", date: "2026-03-01", category: "Supermarket")
+    let restorable = try recordEntry(ledger, cents: 2_500, kind: .expense, payee: "Lidl", date: "2026-03-02", category: "Supermarket")
+    let expired = try recordEntry(ledger, cents: 4_000, kind: .expense, payee: "DB", date: "2026-01-10", category: "Train")
+
+    try ledger.trash(restorable.id, on: try #require(ReportingDate(iso8601: "2026-03-05")))
+    try ledger.trash(expired.id, on: try #require(ReportingDate(iso8601: "2026-01-31")))
+
+    let today = try #require(ReportingDate(iso8601: "2026-03-03"))
+    // On 2026-03-03, 2026-01-31 is 31 days ago (> 30), so trashedEntries(today:) purges it automatically.
+    // Wait: restorable was trashed on 2026-03-05, so let's query on 2026-03-06 (34 days after 2026-01-31, 1 day after 2026-03-05).
+    let checkDate = try #require(ReportingDate(iso8601: "2026-03-06"))
+    let trashed = try ledger.trashedEntries(today: checkDate)
+    #expect(trashed.map(\.id) == [restorable.id])
+    #expect(trashed.map(\.daysRemaining) == [29])
+    #expect(throws: RecordEntryError.unknownEntry) { try ledger.transaction(id: expired.id) }
+
+    // Before restore, only kept (1000) is in March spending total
+    #expect(try ledger.runReport(.currentMonthSpending, today: checkDate) == .spendingTotal(SignedCents(1_000)))
+    try ledger.restore(restorable.id)
+    // After restore, kept + restorable (3500) are in March spending total
+    #expect(try ledger.runReport(.currentMonthSpending, today: checkDate) == .spendingTotal(SignedCents(3_500)))
+    #expect(try ledger.transactions().map(\.id).contains(kept.id))
+    #expect(try ledger.transactions().map(\.id).contains(restorable.id))
+    _ = today
+}

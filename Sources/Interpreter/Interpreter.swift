@@ -26,42 +26,113 @@ public struct InterpretationScore: Equatable, Sendable {
     public var passed: Bool { operationMatches && argumentMismatches.isEmpty }
 }
 
-public struct Interpreter {
-    public let modelUnavailableReason: ModelUnavailableReason?
-    private let ledger: Ledger
-    private let today: ReportingDate
+/// Snapshot of ledger metadata passed to a language model backend for interpretation.
+public struct InterpretationContext: Sendable {
+    public let today: ReportingDate
+    public let categories: [Category]
+    public let payees: [Payee]
+    public let aliasNames: [String]
 
-    public static let supportedExplanation = """
-    Centtrail can answer four kinds of question: a total, a breakdown by month or category, \
-    a comparison of this month with last month, and a search for transactions.
-    """
-
-    public init(ledger: Ledger, today: ReportingDate, modelUnavailableReason: ModelUnavailableReason? = .modelNotReady) {
-        self.ledger = ledger
+    public init(
+        today: ReportingDate,
+        categories: [Category],
+        payees: [Payee],
+        aliasNames: [String] = []
+    ) {
         self.today = today
+        self.categories = categories
+        self.payees = payees
+        self.aliasNames = aliasNames
+    }
+}
+
+/// Pluggable backend that maps natural-language questions and capture text into structured intents.
+public protocol LanguageModelBackend: Sendable {
+    var modelUnavailableReason: ModelUnavailableReason? { get }
+    func interpretReport(
+        _ text: String,
+        context: InterpretationContext,
+        resolvedName: String?
+    ) throws -> ReportInterpretation
+    func interpretReportAsync(
+        _ text: String,
+        context: InterpretationContext,
+        resolvedName: String?
+    ) async throws -> ReportInterpretation
+    func interpretCapture(_ text: String, context: InterpretationContext) throws -> EntryDraft
+    func interpretCaptureAsync(_ text: String, context: InterpretationContext) async throws -> EntryDraft
+}
+
+public extension LanguageModelBackend {
+    func interpretReport(_ text: String, context: InterpretationContext) throws -> ReportInterpretation {
+        try interpretReport(text, context: context, resolvedName: nil)
+    }
+
+    func interpretReportAsync(
+        _ text: String,
+        context: InterpretationContext,
+        resolvedName: String?
+    ) async throws -> ReportInterpretation {
+        try interpretReport(text, context: context, resolvedName: resolvedName)
+    }
+
+    func interpretCaptureAsync(_ text: String, context: InterpretationContext) async throws -> EntryDraft {
+        try interpretCapture(text, context: context)
+    }
+}
+
+/// Deterministic keyword-based backend used when an on-device language model is not used.
+public struct KeywordLanguageModelBackend: LanguageModelBackend {
+    public let modelUnavailableReason: ModelUnavailableReason?
+
+    private static let mutationVerbs: Set<String> = [
+        "add", "record", "delete", "remove", "trash", "restore",
+        "edit", "change", "update", "rename", "merge", "import",
+    ]
+
+    public init(modelUnavailableReason: ModelUnavailableReason? = .modelNotReady) {
         self.modelUnavailableReason = modelUnavailableReason
     }
 
-    public func interpretReport(_ text: String) throws -> ReportInterpretation {
+    public func interpretReport(
+        _ text: String,
+        context: InterpretationContext,
+        resolvedName: String?
+    ) throws -> ReportInterpretation {
         let folded = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = folded.lowercased()
-        let names = try knownNames()
-        let tokens = lower.split { !$0.isLetter && !$0.isNumber }.map(String.init)
-        let hits = names.filter { known in
-            let name = known.name.lowercased()
-            if lower.contains(name) { return true }
-            return tokens.contains { token in name == token || name.hasPrefix(token + " ") }
+        guard !folded.isEmpty else {
+            return .unsupported(Interpreter.supportedExplanation)
         }
-        let kept = hits.filter { candidate in
-            !hits.contains { other in
-                other.name.count > candidate.name.count
-                    && lower.contains(other.name.lowercased())
-                    && other.name.lowercased().contains(candidate.name.lowercased())
+        let lower = folded.lowercased()
+        let tokens = lower.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        if tokens.contains(where: { Self.mutationVerbs.contains($0) }) {
+            return .unsupported("Ask is read-only and cannot change your data. \(Interpreter.supportedExplanation)")
+        }
+
+        let names = knownNames(from: context)
+        let kept: [KnownName]
+        if let resolvedName {
+            let target = resolvedName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            kept = names.filter { $0.name.lowercased() == target }
+        } else {
+            let hits = names.filter { known in
+                let name = known.name.lowercased()
+                if lower.contains(name) { return true }
+                return tokens.contains { token in name == token || name.hasPrefix(token + " ") }
+            }
+            kept = hits.filter { candidate in
+                !hits.contains { other in
+                    other.name.count > candidate.name.count
+                        && lower.contains(other.name.lowercased())
+                        && other.name.lowercased().contains(candidate.name.lowercased())
+                }
+            }
+            if Set(kept.map { $0.name.lowercased() }).count > 1 {
+                let uniqueNames = Set(kept.map(\.name))
+                return .clarification(uniqueNames.sorted())
             }
         }
-        if kept.count > 1, Set(kept.map { $0.name.lowercased() }).count > 1 {
-            return .clarification(kept.map(\.name).sorted())
-        }
+
         let categoryID = kept.first { $0.kind == .category }?.categoryID
         let payeeName = kept.first { $0.kind == .payee }?.name
         let measure: Measure = lower.contains("income") || lower.contains("earned") ? .income : .spending
@@ -69,58 +140,106 @@ public struct Interpreter {
         if lower.contains("vs") || lower.contains("versus") || lower.contains("compared") {
             return .operation(.comparison(measure: measure, categoryID: categoryID, payeeName: payeeName))
         }
+
+        let range = parsedRange(in: lower, today: context.today)
+
         if lower.contains("by category") || lower.contains("over month") || lower.contains("each month") || lower.contains("breakdown") {
             let grouping: Grouping = (lower.contains("over month") || lower.contains("each month")) && lower.contains("by category")
                 ? .monthAndCategory
                 : (lower.contains("over month") || lower.contains("each month") ? .month : .category)
-            return .operation(.breakdown(ReportQuery(measure: measure, categoryID: categoryID, payeeName: payeeName, grouping: grouping)))
+            return .operation(.breakdown(ReportQuery(
+                measure: measure,
+                range: range,
+                categoryID: categoryID,
+                payeeName: payeeName,
+                grouping: grouping
+            )))
         }
-        if lower.contains("find") || lower.contains("search") || lower.contains("exactly")
+        if lower.contains("find") || lower.contains("search") || lower.contains("list") || lower.contains("show")
+            || lower.contains("biggest") || lower.contains("largest") || lower.contains("exactly")
             || lower.contains("over ") || lower.contains("under ") || lower.contains("more than") || lower.contains("less than") {
-            return .operation(.search(searchQuery(lower, categoryID: categoryID, payeeName: payeeName)))
+            return .operation(.search(searchQuery(lower, range: range, categoryID: categoryID, payeeName: payeeName)))
         }
-        if lower.contains("how much") || lower.contains("total") || lower.contains("spend") || lower.contains("spent") || lower.contains("income") {
-            return .operation(.total(ReportQuery(measure: measure, categoryID: categoryID, payeeName: payeeName)))
+        if lower.contains("how much") || lower.contains("total") || lower.contains("spend") || lower.contains("spent")
+            || lower.contains("income") || lower.contains("earned") {
+            return .operation(.total(ReportQuery(
+                measure: measure,
+                range: range,
+                categoryID: categoryID,
+                payeeName: payeeName
+            )))
         }
-        return .unsupported(Self.supportedExplanation)
+        return .unsupported(Interpreter.supportedExplanation)
     }
 
-    public func interpretCapture(_ text: String) throws -> CaptureInterpretation {
-        let draft = try captureDraft(from: text)
-        return CaptureInterpretation(draft: draft, modelUnavailable: modelUnavailableReason)
-    }
-
-    public func score(_ actual: ReportInterpretation, expected: ReportInterpretation) -> InterpretationScore {
-        switch (actual, expected) {
-        case (.operation(let actualOperation), .operation(let expectedOperation)):
-            return scoreOperation(actualOperation, expectedOperation)
-        case (.clarification(let actualNames), .clarification(let expectedNames)):
-            let matches = actualNames == expectedNames
-            return InterpretationScore(operationMatches: matches, argumentMismatches: matches ? [] : ["candidates"])
-        case (.unsupported, .unsupported):
-            return InterpretationScore(operationMatches: true, argumentMismatches: [])
-        default:
-            return InterpretationScore(operationMatches: false, argumentMismatches: ["operation"])
-        }
-    }
-
-    private func captureDraft(from text: String) throws -> EntryDraft {
+    public func interpretCapture(_ text: String, context: InterpretationContext) throws -> EntryDraft {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
         let kind: Kind = lower.contains("income") || lower.contains("from ") ? .income : .expense
         let amount = firstAmount(in: trimmed)
         let name = capturePayee(in: trimmed)
-        let date = captureDate(in: lower)
-        let category = try categoryMentioned(in: lower) ?? (name.flatMap { try? ledger.defaultCategory(forPayeeName: $0) })
-        let overrides = (try? categoryMentioned(in: lower)) != nil
+        let date = captureDate(in: lower, today: context.today)
+        let mentionedCategory = context.categories.first { lower.contains($0.name.lowercased()) }
+        let payeeDefault = name.flatMap { candidate in
+            context.payees.first { $0.name.caseInsensitiveCompare(candidate) == .orderedSame }?.defaultCategory
+        }
+        let category = mentionedCategory ?? payeeDefault
         return EntryDraft(
             amount: amount,
             kind: kind,
             payee: name,
             reportingDate: date,
             categoryID: category?.id,
-            overridesCategory: overrides && category != nil
+            overridesCategory: mentionedCategory != nil
         )
+    }
+
+    private struct KnownName {
+        var name: String
+        var kind: NameKind
+        var categoryID: Category.ID?
+    }
+
+    private enum NameKind { case category, payee }
+
+    private func knownNames(from context: InterpretationContext) -> [KnownName] {
+        var names = context.categories.map {
+            KnownName(name: $0.name, kind: .category, categoryID: $0.id)
+        }
+        for payee in context.payees {
+            names.append(KnownName(name: payee.name, kind: .payee, categoryID: nil))
+        }
+        for alias in context.aliasNames {
+            names.append(KnownName(name: alias, kind: .payee, categoryID: nil))
+        }
+        return names
+    }
+
+    private func parsedRange(in lower: String, today: ReportingDate) -> DateRange? {
+        if lower.contains("last month") {
+            var year = today.year
+            var month = today.month - 1
+            if month == 0 {
+                month = 12
+                year -= 1
+            }
+            let last = ReportingDate.dayCount(month: month, year: year)
+            if let start = ReportingDate(year: year, month: month, day: 1),
+               let end = ReportingDate(year: year, month: month, day: last) {
+                return DateRange(start: start, end: end)
+            }
+        }
+        if let match = lower.range(of: #"\b\d{4}-\d{2}\b"#, options: .regularExpression) {
+            let parts = lower[match].split(separator: "-")
+            if parts.count == 2, let year = Int(parts[0]), let month = Int(parts[1]), (1...12).contains(month) {
+                let last = ReportingDate.dayCount(month: month, year: year)
+                if let start = ReportingDate(year: year, month: month, day: 1),
+                   let end = ReportingDate(year: year, month: month, day: last) {
+                    return DateRange(start: start, end: end)
+                }
+            }
+        }
+        return nil
     }
 
     private func firstAmount(in text: String) -> Cents? {
@@ -159,7 +278,7 @@ public struct Interpreter {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private func captureDate(in lower: String) -> ReportingDate? {
+    private func captureDate(in lower: String, today: ReportingDate) -> ReportingDate? {
         if lower.contains("yesterday") { return today.addingDays(-1) }
         if lower.contains("today") { return today }
         if let range = lower.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression) {
@@ -168,33 +287,12 @@ public struct Interpreter {
         return today
     }
 
-    private func categoryMentioned(in lower: String) throws -> Category? {
-        let categories = try ledger.categories()
-        return categories.first { lower.contains($0.name.lowercased()) }
-    }
-
-    private struct KnownName {
-        var name: String
-        var kind: NameKind
-        var categoryID: Category.ID?
-    }
-
-    private enum NameKind { case category, payee }
-
-    private func knownNames() throws -> [KnownName] {
-        var names = try ledger.categories().map {
-            KnownName(name: $0.name, kind: .category, categoryID: $0.id)
-        }
-        for payee in try ledger.payees() {
-            names.append(KnownName(name: payee.name, kind: .payee, categoryID: nil))
-        }
-        for alias in try ledger.confirmedAliases() {
-            names.append(KnownName(name: alias.name, kind: .payee, categoryID: nil))
-        }
-        return names
-    }
-
-    private func searchQuery(_ lower: String, categoryID: Category.ID?, payeeName: String?) -> ReportQuery {
+    private func searchQuery(
+        _ lower: String,
+        range: DateRange?,
+        categoryID: Category.ID?,
+        payeeName: String?
+    ) -> ReportQuery {
         var amount: AmountCondition?
         if let cents = euroCondition(in: lower) {
             if lower.contains("over") || lower.contains("more than") || lower.contains("greater than") {
@@ -205,12 +303,97 @@ public struct Interpreter {
                 amount = .equal(cents)
             }
         }
-        return ReportQuery(measure: .spending, categoryID: categoryID, payeeName: payeeName, amount: amount)
+        return ReportQuery(
+            measure: .spending,
+            range: range,
+            categoryID: categoryID,
+            payeeName: payeeName,
+            amount: amount
+        )
     }
 
     private func euroCondition(in lower: String) -> Cents? {
         guard let range = lower.range(of: #"\d+(?:[.,]\d{1,2})?"#, options: .regularExpression) else { return nil }
         return Cents(euroText: String(lower[range]))
+    }
+}
+
+public struct Interpreter {
+    public let backend: any LanguageModelBackend
+    public var modelUnavailableReason: ModelUnavailableReason? { backend.modelUnavailableReason }
+    private let ledger: Ledger
+    private let today: ReportingDate
+
+    public static let supportedExplanation = """
+    Centtrail can answer four kinds of question: a total, a breakdown by month or category, \
+    a comparison of this month with last month, and a search for transactions.
+    """
+
+    public init(
+        ledger: Ledger,
+        today: ReportingDate,
+        backend: any LanguageModelBackend = AppleFoundationModelBackend()
+    ) {
+        self.ledger = ledger
+        self.today = today
+        self.backend = backend
+    }
+
+    public init(
+        ledger: Ledger,
+        today: ReportingDate,
+        modelUnavailableReason: ModelUnavailableReason?
+    ) {
+        self.init(
+            ledger: ledger,
+            today: today,
+            backend: KeywordLanguageModelBackend(modelUnavailableReason: modelUnavailableReason)
+        )
+    }
+
+    public func interpretReport(_ text: String, resolvedName: String? = nil) throws -> ReportInterpretation {
+        let context = try makeContext()
+        return try backend.interpretReport(text, context: context, resolvedName: resolvedName)
+    }
+
+    public func interpretReportAsync(_ text: String, resolvedName: String? = nil) async throws -> ReportInterpretation {
+        let context = try makeContext()
+        return try await backend.interpretReportAsync(text, context: context, resolvedName: resolvedName)
+    }
+
+    public func interpretCapture(_ text: String) throws -> CaptureInterpretation {
+        let context = try makeContext()
+        let draft = try backend.interpretCapture(text, context: context)
+        return CaptureInterpretation(draft: draft, modelUnavailable: backend.modelUnavailableReason)
+    }
+
+    public func interpretCaptureAsync(_ text: String) async throws -> CaptureInterpretation {
+        let context = try makeContext()
+        let draft = try await backend.interpretCaptureAsync(text, context: context)
+        return CaptureInterpretation(draft: draft, modelUnavailable: backend.modelUnavailableReason)
+    }
+
+    public func score(_ actual: ReportInterpretation, expected: ReportInterpretation) -> InterpretationScore {
+        switch (actual, expected) {
+        case (.operation(let actualOperation), .operation(let expectedOperation)):
+            return scoreOperation(actualOperation, expectedOperation)
+        case (.clarification(let actualNames), .clarification(let expectedNames)):
+            let matches = actualNames == expectedNames
+            return InterpretationScore(operationMatches: matches, argumentMismatches: matches ? [] : ["candidates"])
+        case (.unsupported, .unsupported):
+            return InterpretationScore(operationMatches: true, argumentMismatches: [])
+        default:
+            return InterpretationScore(operationMatches: false, argumentMismatches: ["operation"])
+        }
+    }
+
+    public func makeContext() throws -> InterpretationContext {
+        InterpretationContext(
+            today: today,
+            categories: try ledger.categories(),
+            payees: try ledger.payees(),
+            aliasNames: try ledger.confirmedAliases().map(\.name)
+        )
     }
 
     private func scoreOperation(_ actual: ReportOperation, _ expected: ReportOperation) -> InterpretationScore {

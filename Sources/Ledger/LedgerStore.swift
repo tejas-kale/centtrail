@@ -224,10 +224,8 @@ final class SQLiteConnection {
 
     private static func fetchRows(_ db: Database, sql: String, arguments: StatementArguments) throws -> [[SQLiteValue]] {
         let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
-        return rows.map { row in
-            (0..<row.count).map { index in
-                SQLiteValue(row[index].databaseValue)
-            }
+        return rows.map { row -> [SQLiteValue] in
+            row.databaseValues.map(SQLiteValue.init)
         }
     }
 }
