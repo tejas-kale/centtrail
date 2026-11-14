@@ -2,6 +2,14 @@ import Foundation
 import GRDB
 import SQLiteData
 
+@Table("reference_customization")
+struct ReferenceCustomizationRecord: Identifiable, Sendable {
+    let id: UUID
+    var name: String?
+    @Column("is_removed")
+    var isRemoved: Bool = false
+}
+
 @Table("account")
 struct AccountRecord: Identifiable, Sendable {
     let id: UUID
@@ -188,8 +196,8 @@ final class SQLiteConnection {
                     category_provenance TEXT NOT NULL DEFAULT 'inherited',
                     note TEXT,
                     trashed_on TEXT,
-                    account_id TEXT REFERENCES account(id) ON DELETE RESTRICT,
-                    destination_account_id TEXT REFERENCES account(id) ON DELETE RESTRICT
+                    account_id TEXT REFERENCES account(id) ON DELETE SET NULL,
+                    destination_account_id TEXT REFERENCES account(id) ON DELETE SET NULL
                 ) STRICT;
                 INSERT INTO entry_accounts (id, amount_cents, kind, counterparty_id, reporting_date, category_id, category_provenance, note, trashed_on)
                     SELECT id, amount_cents, kind, counterparty_id, reporting_date, category_id, category_provenance, note, trashed_on FROM entry;
@@ -206,6 +214,24 @@ final class SQLiteConnection {
                 ) STRICT;
                 INSERT INTO import_row SELECT * FROM saved_import_rows;
                 DROP TABLE saved_import_rows;
+                """)
+        }
+        migrator.registerMigration("v2_reference_customizations") { db in
+            try db.execute(sql: """
+                CREATE TABLE reference_customization (
+                    id TEXT PRIMARY KEY NOT NULL ON CONFLICT REPLACE DEFAULT (uuid()),
+                    name TEXT, is_removed INTEGER NOT NULL DEFAULT 0
+                ) STRICT;
+                CREATE VIEW effective_category AS
+                    SELECT category.rowid AS rowid, category.id,
+                        COALESCE(custom.name, category.name) AS name, category.counts_as_spending,
+                        COALESCE(custom.is_removed, 0) AS is_removed
+                    FROM category LEFT JOIN reference_customization AS custom ON custom.id = category.id;
+                CREATE VIEW effective_account AS
+                    SELECT account.rowid AS rowid, account.id,
+                        COALESCE(custom.name, account.name) AS name,
+                        COALESCE(custom.is_removed, 0) AS is_removed
+                    FROM account LEFT JOIN reference_customization AS custom ON custom.id = account.id;
                 """)
         }
         try migrator.migrate(database)
@@ -226,6 +252,7 @@ final class SQLiteConnection {
             for: database,
             tables: CategoryRecord.self,
             AccountRecord.self,
+            ReferenceCustomizationRecord.self,
             CounterpartyRecord.self,
             EntryRecord.self,
             CounterpartyAliasRecord.self,
@@ -334,7 +361,7 @@ public final class LedgerObservation {
 }
 
 extension SQLiteConnection {
-    static let ledgerTables = ["account", "category", "counterparty", "entry", "counterparty_alias", "import_row", "proposed_payee_default"]
+    static let ledgerTables = ["reference_customization", "account", "category", "counterparty", "entry", "counterparty_alias", "import_row", "proposed_payee_default"]
 
     func observeChanges(_ onChange: @escaping @Sendable () -> Void) -> LedgerObservation {
         let regions = Self.ledgerTables.map { GRDB.Table($0) as any DatabaseRegionConvertible }

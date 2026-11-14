@@ -85,3 +85,20 @@ import Testing
     #expect(try ledger.proposedPayeeDefaults().isEmpty)
     #expect(try ledger.payees().map(\.name) == ["Amazon"])
 }
+
+@Test func mergedInheritedEntriesFollowTheSurvivorWhileOverridesSurvive() throws {
+    let ledger = try Ledger.openInMemory()
+    let target = try recordEntry(ledger, cents: 100, kind: .expense, payee: "Amazon", date: "2026-11-01", category: "Shopping")
+    let inherited = try recordEntry(ledger, cents: 1200, kind: .expense, payee: "AMZN", date: "2026-11-02", category: "Supermarket")
+    let overridden = try recordEntry(ledger, cents: 4500, kind: .expense, payee: "AMZN", date: "2026-11-03", category: "Supermarket")
+    let electronics = try namedCategory(ledger, "Electronics")
+    try ledger.setCategory(electronics.id, for: overridden.id)
+    try ledger.mergePayees(sourceID: inherited.payee!.id, into: target.payee!.id)
+    #expect(try ledger.transaction(id: inherited.id).category?.name == "Shopping")
+    #expect(try ledger.transaction(id: inherited.id).categoryProvenance == .inherited)
+    #expect(try ledger.transaction(id: overridden.id).category == electronics)
+    #expect(try ledger.transaction(id: overridden.id).categoryProvenance == .overridden)
+    try ledger.setDefaultCategory(try namedCategory(ledger, "Software").id, for: target.payee!.id)
+    #expect(try ledger.transaction(id: inherited.id).category?.name == "Software")
+    #expect(try ledger.transaction(id: overridden.id).category == electronics)
+}

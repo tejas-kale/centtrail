@@ -13,6 +13,8 @@ final class CaptureModel: ObservableObject {
     let ledger: Ledger
     let today: ReportingDate
 
+    @Published private(set) var editingEntryID: LedgerTransaction.ID?
+    @Published var draftNote = ""
     @Published var amountText = ""
     @Published var kind: Kind = .expense
     @Published var payee = ""
@@ -76,8 +78,25 @@ final class CaptureModel: ObservableObject {
         isPresentingAddSheet = true
     }
 
+    func openEditSheet(_ transaction: LedgerTransaction) {
+        clearDraft()
+        editingEntryID = transaction.id
+        amountText = "\(transaction.amount.value / 100).\(String(format: "%02d", transaction.amount.value % 100))"
+        kind = transaction.kind
+        payee = transaction.payee?.name ?? ""
+        selectedDate = Self.date(from: transaction.reportingDate)
+        categoryID = transaction.category?.id
+        categoryChosenManually = transaction.categoryProvenance == .overridden
+        accountID = transaction.account.id
+        destinationAccountID = transaction.destinationAccount?.id
+        draftNote = transaction.note ?? ""
+        isPresentingAddSheet = true
+    }
+
     func clearDraft() {
         cancelSpeechInterpretation()
+        editingEntryID = nil
+        draftNote = ""
         amountText = ""
         kind = .expense
         payee = ""
@@ -128,8 +147,9 @@ final class CaptureModel: ObservableObject {
         )
         let directory = support.appendingPathComponent("Centtrail", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // v2 starts clean for CSV re-import and never opens the v1 database.
         let ledger = try Ledger.open(
-            at: directory.appendingPathComponent("ledger.sqlite"),
+            at: directory.appendingPathComponent("ledger-v2.sqlite"),
             sync: LedgerSyncSettings.syncMode(infoDictionary: Bundle.main.infoDictionary ?? [:])
         )
         guard let today = civilDate(Date(), calendar: .current) else {
@@ -142,7 +162,11 @@ final class CaptureModel: ObservableObject {
     func save() -> Bool {
         let draft = currentDraft
         do {
-            _ = try ledger.record(draft)
+            if let editingEntryID {
+                _ = try ledger.update(editingEntryID, with: draft)
+            } else {
+                _ = try ledger.record(draft)
+            }
             clearDraft()
             try reload()
             return true
@@ -164,7 +188,8 @@ final class CaptureModel: ObservableObject {
             categoryID: kind == .transfer ? nil : categoryID,
             accountID: accountID,
             destinationAccountID: kind == .transfer ? destinationAccountID : nil,
-            overridesCategory: categoryChosenManually
+            overridesCategory: categoryChosenManually,
+            note: draftNote.isEmpty ? nil : draftNote
         )
     }
 

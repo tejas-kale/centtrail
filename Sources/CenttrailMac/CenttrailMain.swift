@@ -1,3 +1,4 @@
+import AppIntents
 import CenttrailShell
 import SwiftUI
 
@@ -15,5 +16,11 @@ struct CenttrailMacApp: App {
                 .keyboardShortcut("n", modifiers: [.command])
             }
         }
+    }
+}
+
+struct HostAppIntentsPackage: AppIntentsPackage {
+    static var includedPackages: [any AppIntentsPackage.Type] {
+        [CenttrailAppIntentsPackage.self]
     }
 }

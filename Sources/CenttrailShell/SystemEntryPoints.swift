@@ -51,3 +51,6 @@ public struct CenttrailShortcuts: AppShortcutsProvider {
         )
     }
 }
+
+/// Exposes package intents and shortcuts to each signed app host.
+public struct CenttrailAppIntentsPackage: AppIntentsPackage {}

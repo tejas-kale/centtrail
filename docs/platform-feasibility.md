@@ -91,7 +91,9 @@ Checks:
 - [ ] **Categories, payees and defaults**: Add a category on the Mac, change a payee's default category on the iPhone, and merge two payees on the Mac. Each change shows on the other device.
 - [ ] **CSV import**: Import the owner's CSV on one device. All transactions appear on the other device; the totals for one past month match on both.
 
-Known limit: seeded categories use the same ID on every device, so a fresh install never duplicates them. But a device installed later seeds each category again with its original name. That re-seed can revert a rename of a seeded category, or bring back a removed one, made on another device. If that happens, rename or remove the category again.
+Seeded categories and accounts use stable IDs and immutable bootstrap defaults. A separate synced customization record stores user names and removal tombstones, so a later seed upload cannot overwrite those choices. Public Ledger tests verify names, removals, transaction labels and reports across repeated bootstrap/reopen; SyncEngine stand-in tests validate the overlay schema. Physical two-device convergence, including installing a second device after customization, remains unchecked.
+
+The v2 app opens `Centtrail/ledger-v2.sqlite`. It leaves the v1 `ledger.sqlite` untouched and starts clean for the owner's CSV re-import; it does not attempt to migrate a v1 schema.
 
 ## Ask on Apple Foundation Models evaluation (2026-11-14)
 
@@ -101,7 +103,8 @@ Known limit: seeded categories use the same ID on every device, so a fresh insta
   - **12 representative questions** covering totals (spending/income, current/last month), breakdowns (`category`, `month`, `monthAndCategory`), comparisons, searches with amount filters, ambiguous payee clarification (`Amazon` vs `Amazon Fresh`), out-of-scope questions (`what is my net worth?`), and mutation refusals (`delete all my transactions`).
   - **Keyword fallback (`KeywordLanguageModelBackend`)**: 12/12 operation accuracy, 12/12 argument accuracy.
   - **Foundation Models schema + validator (`AppleFoundationModelBackend` with injected `@Generable` fixtures)**: 12/12 operation accuracy, 12/12 argument accuracy, plus verified rejection of invalid date ranges, negative amounts, and unknown categories.
-  - **Host environment**: On this macOS build host, `SystemLanguageModel.default.availability` reports `.unavailable(.deviceNotEligible)`, so live on-device model inference did not execute here.
+  - **Mac host observation, 2026-11-14**: The model was available during the integration baseline run. Live inference measured cold 2.5395 s and warm 1.4433 s on this Mac. The cold question (“how much did I spend this month?”) generated an invalid category (`Middle Eats`), which validation safely refused. These two observations are neither an accuracy benchmark nor iPhone timings and supersede the earlier unavailable-host observation.
+  - **Opt-in live evaluation**: Ordinary tests use injected fixtures and the keyword backend. Set `CENTTRAIL_LIVE_MODEL_EVALUATION=1` when explicitly running `appleFoundationModelLiveSmokeAndTimingWhenAvailable`; its stochastic results are diagnostic and device-specific.
 
 ### Physical iPhone Air timing & accuracy checklist (5–7 second target)
 
@@ -114,7 +117,7 @@ Physical iPhone Air timings (cold and warm end-to-end latency) and live on-devic
 
 ## Local validation boundary
 
-The local `swift test` suite runs and passes on macOS in this workspace, but live CloudKit two-device sync and on-device Foundation Models behavior require signed Apple app targets and physical hardware (iPhone Air and Mac) and were not run in this session.
+The local `swift test` suite runs and passes on macOS in this workspace, but live CloudKit two-device sync, iPhone Foundation Models accuracy/latency, and signed device interactions remain unexecuted. The Mac-only live model observations above do not establish those acceptance criteria.
 
 
 ## Voice capture (ticket 14, 2026-11-14)

@@ -23,3 +23,9 @@ struct AddExpenseControl: ControlWidget {
         .description("Opens Centtrail to record a new entry.")
     }
 }
+
+struct HostAppIntentsPackage: AppIntentsPackage {
+    static var includedPackages: [any AppIntentsPackage.Type] {
+        [CenttrailAppIntentsPackage.self]
+    }
+}

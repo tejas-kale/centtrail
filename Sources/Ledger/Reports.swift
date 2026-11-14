@@ -294,7 +294,7 @@ extension Ledger {
     private var reportFrom: String {
         """
         FROM entry
-        JOIN category AS entry_category ON entry_category.id = entry.category_id
+        JOIN effective_category AS entry_category ON entry_category.id = entry.category_id
         JOIN counterparty ON counterparty.id = entry.counterparty_id
         """
     }

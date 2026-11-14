@@ -424,6 +424,7 @@ struct AddEntrySheet: View {
                         }
                     }
                     DatePicker("Date", selection: $model.selectedDate, displayedComponents: .date)
+                    if model.editingEntryID != nil { TextField("Note", text: $model.draftNote) }
                 }
 
                 if let message = model.draftMessage ?? missingFieldMessage {
@@ -434,7 +435,7 @@ struct AddEntrySheet: View {
                 }
             }
             .disabled(model.isInterpretingSpeech)
-            .navigationTitle("New transaction")
+            .navigationTitle(model.editingEntryID == nil ? "New transaction" : "Edit transaction")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -476,14 +477,16 @@ struct AddEntrySheet: View {
 
 struct TransactionDetail: View {
     @ObservedObject var model: CaptureModel
-    let transaction: LedgerTransaction
+    let originalTransaction: LedgerTransaction
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedCategoryID: LedgerCategoryID?
 
     init(model: CaptureModel, transaction: LedgerTransaction) {
         self.model = model
-        self.transaction = transaction
-        self._selectedCategoryID = State(initialValue: transaction.category?.id)
+        self.originalTransaction = transaction
+    }
+
+    private var transaction: LedgerTransaction {
+        model.transactions.first { $0.id == originalTransaction.id } ?? originalTransaction
     }
 
     var body: some View {
@@ -505,17 +508,7 @@ struct TransactionDetail: View {
                 if let payee = transaction.payee { LabeledContent("Payee", value: payee.name) }
                 LabeledContent("Account", value: transaction.account.name)
                 if let destination = transaction.destinationAccount { LabeledContent("To account", value: destination.name) }
-                if transaction.kind != .transfer {
-                    Picker("Category", selection: $selectedCategoryID) {
-                        ForEach(model.categories) { category in
-                            Text(category.name).tag(Optional(category.id))
-                        }
-                    }
-                    .onChange(of: selectedCategoryID) { _, newValue in
-                        guard let newValue, newValue != transaction.category?.id else { return }
-                        model.updateCategory(newValue, for: transaction.id)
-                    }
-                }
+                if let category = transaction.category { LabeledContent("Category", value: category.name) }
                 LabeledContent("Reporting date", value: transaction.reportingDate.iso8601)
                 if let note = transaction.note, !note.isEmpty {
                     LabeledContent("Note", value: note)
@@ -532,6 +525,7 @@ struct TransactionDetail: View {
             }
         }
         .navigationTitle(transaction.payee?.name ?? "Transfer")
+        .toolbar { Button("Edit") { model.openEditSheet(transaction) } }
     }
 }
 

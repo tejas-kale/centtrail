@@ -1,4 +1,5 @@
 import CenttrailShell
+import Foundation
 import FoundationModels
 import Interpreter
 import Ledger
@@ -329,10 +330,11 @@ import Testing
     #expect(result.draft.note == "Lunch")
 }
 
-@Test func appleFoundationModelLiveSmokeAndTimingWhenAvailable() async throws {
+@Test(.enabled(if: ProcessInfo.processInfo.environment["CENTTRAIL_LIVE_MODEL_EVALUATION"] == "1", "Set CENTTRAIL_LIVE_MODEL_EVALUATION=1 to run stochastic on-device evaluation."))
+func appleFoundationModelLiveSmokeAndTimingWhenAvailable() async throws {
     let backend = AppleFoundationModelBackend()
     guard backend.modelUnavailableReason == nil else {
-        // System reports model unavailable on this host; live on-device timing is recorded on iPhone Air.
+        // Availability and timings are host-specific; iPhone measurements remain manual.
         return
     }
     let ledger = try Ledger.openInMemory()
