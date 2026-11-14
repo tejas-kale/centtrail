@@ -47,9 +47,10 @@ public struct ImportRow: Equatable, Sendable, Identifiable {
 
 public struct ImportCommitResult: Equatable, Sendable {
     public let importedCount: Int
+    public let skippedCount: Int
 }
 
-public enum UncertainDecision: Equatable, Sendable {
+public enum UncertainDecision: Hashable, Sendable {
     case keep
     case skip
 }
@@ -67,8 +68,6 @@ public struct ProposedPayeeDefault: Equatable, Sendable, Identifiable {
         self.categoryName = categoryName
     }
 }
-
-private let incomeCategoryNames: Set<String> = ["Salary", "Kindergeld"]
 
 extension Ledger {
     public func previewImport(_ csv: String, mapping: ImportMapping = ImportMapping()) throws -> [ImportRow] {
@@ -104,7 +103,7 @@ extension Ledger {
                 try acceptProposedPayeeDefault(for: Payee.ID(rawValue: id))
             }
         }
-        return ImportCommitResult(importedCount: imported)
+        return ImportCommitResult(importedCount: imported, skippedCount: classified.count - imported)
     }
 
     private struct ClassifiedImport {
@@ -159,10 +158,8 @@ extension Ledger {
             let category = categories.first { $0.name == categoryName }
             if category == nil { reasons.append("Unknown category \(categoryName).") }
             if payee.isEmpty { reasons.append("The payee is missing.") }
-            let isIncomeCategory = incomeCategoryNames.contains(categoryName)
-            if parsedAmount.sign > 0, category != nil, !isIncomeCategory {
-                reasons.append("A positive amount in an expense category is held until the refund and transfer format is confirmed.")
-            }
+            if sourceAccount.isEmpty { reasons.append("The source account is missing.") }
+            if parsedAmount.cents == 0 { reasons.append("The amount must be greater than zero.") }
             let kind: Kind = parsedAmount.sign < 0 ? .expense : .income
             let rowDate = reportingDate?.iso8601
             if !reasons.isEmpty || category == nil || reportingDate == nil {
@@ -191,7 +188,6 @@ extension Ledger {
                 payee: payee,
                 reportingDate: fingerprint.reportingDate,
                 categoryID: category!.id,
-                accountID: try accounts()[0].id,
                 note: fingerprint.note
             )
             classified.append(ClassifiedImport(
@@ -300,7 +296,12 @@ extension Ledger {
     }
 
     private func commit(_ item: ClassifiedImport) throws {
-        guard let draft = item.draft, let fingerprint = item.fingerprint else { return }
+        guard var draft = item.draft, let fingerprint = item.fingerprint else { return }
+        if let existing = try accounts().first(where: { $0.name.caseInsensitiveCompare(fingerprint.sourceAccount) == .orderedSame }) {
+            draft.accountID = existing.id
+        } else {
+            draft.accountID = try addAccount(name: fingerprint.sourceAccount).id
+        }
         let recorded = try record(draft, proposeDefaultForNewPayee: true)
         try connection.execute(
             """

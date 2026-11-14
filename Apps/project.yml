@@ -83,6 +83,7 @@ targets:
         com.apple.security.app-sandbox: true
         # iCloud sync of the ledger through CloudKit.
         com.apple.security.network.client: true
+        com.apple.security.files.user-selected.read-only: true
         com.apple.developer.aps-environment: development
         com.apple.developer.icloud-services: [CloudKit]
         com.apple.developer.icloud-container-identifiers: [iCloud.com.tejaskale.centtrail]
