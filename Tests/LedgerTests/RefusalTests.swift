@@ -13,7 +13,8 @@ import Testing
                 kind: .expense,
                 payee: "REWE",
                 reportingDate: reportingDate,
-                categoryID: supermarket.id
+                categoryID: supermarket.id,
+                accountID: try ledger.accounts()[0].id
             )
         )
     }
@@ -31,7 +32,8 @@ import Testing
                 amount: Cents(1250),
                 payee: "REWE",
                 reportingDate: reportingDate,
-                categoryID: supermarket.id
+                categoryID: supermarket.id,
+                accountID: try ledger.accounts()[0].id
             )
         )
     }
@@ -49,7 +51,8 @@ import Testing
                 amount: Cents(1250),
                 kind: .expense,
                 reportingDate: reportingDate,
-                categoryID: supermarket.id
+                categoryID: supermarket.id,
+                accountID: try ledger.accounts()[0].id
             )
         )
     }
@@ -68,7 +71,8 @@ import Testing
                 kind: .expense,
                 payee: " \n\t ",
                 reportingDate: reportingDate,
-                categoryID: supermarket.id
+                categoryID: supermarket.id,
+                accountID: try ledger.accounts()[0].id
             )
         )
     }
@@ -85,7 +89,8 @@ import Testing
                 amount: Cents(1250),
                 kind: .expense,
                 payee: "REWE",
-                categoryID: supermarket.id
+                categoryID: supermarket.id,
+                accountID: try ledger.accounts()[0].id
             )
         )
     }
@@ -102,7 +107,8 @@ import Testing
                 amount: Cents(1250),
                 kind: .expense,
                 payee: "REWE",
-                reportingDate: reportingDate
+                reportingDate: reportingDate,
+                accountID: try ledger.accounts()[0].id
             )
         )
     }
@@ -120,7 +126,8 @@ import Testing
                 kind: .expense,
                 payee: "REWE",
                 reportingDate: reportingDate,
-                categoryID: Category.ID(rawValue: UUID())
+                categoryID: Category.ID(rawValue: UUID()),
+                accountID: try ledger.accounts()[0].id
             )
         )
     }
@@ -136,6 +143,7 @@ import Testing
         .payee,
         .reportingDate,
         .category,
+        .account,
     ])) {
         try ledger.record(EntryDraft())
     }

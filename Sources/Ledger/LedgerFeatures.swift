@@ -16,11 +16,14 @@ SELECT
     default_category.counts_as_spending,
     entry_category.id,
     entry_category.name,
-    entry_category.counts_as_spending
+    entry_category.counts_as_spending,
+    account.id, account.name, destination.id, destination.name
 FROM entry
-JOIN counterparty ON counterparty.id = entry.counterparty_id
-JOIN category AS entry_category ON entry_category.id = entry.category_id
+LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
+LEFT JOIN category AS entry_category ON entry_category.id = entry.category_id
 LEFT JOIN category AS default_category ON default_category.id = counterparty.default_category_id
+JOIN account ON account.id = entry.account_id
+LEFT JOIN account AS destination ON destination.id = entry.destination_account_id
 """
 
 extension Ledger {
@@ -28,9 +31,11 @@ extension Ledger {
         id: UUID,
         amount: Cents,
         kind: Kind,
-        payeeID: UUID,
+        payeeID: UUID?,
         reportingDate: ReportingDate,
-        categoryID: Category.ID,
+        categoryID: Category.ID?,
+        accountID: Account.ID,
+        destinationAccountID: Account.ID?,
         provenance: CategoryProvenance,
         note: String?
     ) throws {
@@ -38,18 +43,20 @@ extension Ledger {
             """
             INSERT INTO entry (
                 id, amount_cents, kind, counterparty_id, reporting_date, category_id,
-                category_provenance, note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                category_provenance, note, account_id, destination_account_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             bindings: [
                 .text(stored(id)),
                 .integer(Int64(amount.value)),
                 .text(kind.rawValue),
-                .text(stored(payeeID)),
+                payeeID.map { .text(stored($0)) } ?? .null,
                 .text(reportingDate.iso8601),
-                .text(stored(categoryID.rawValue)),
+                categoryID.map { .text(stored($0.rawValue)) } ?? .null,
                 .text(provenance.rawValue),
                 note.map(SQLiteValue.text) ?? .null,
+                .text(stored(accountID.rawValue)),
+                destinationAccountID.map { .text(stored($0.rawValue)) } ?? .null,
             ]
         )
     }
@@ -68,36 +75,36 @@ extension Ledger {
     }
 
     func decodeTransaction(_ row: [SQLiteValue]) throws -> Transaction {
-        guard row.count == 15,
+        guard row.count == 19,
               let entryID = row[0].text.flatMap(UUID.init(uuidString:)),
               let cents = row[1].integer,
               let kind = row[2].text.flatMap(Kind.init(rawValue:)),
               let reportingDate = row[3].text.flatMap(ReportingDate.init(iso8601:)),
               let provenance = row[4].text.flatMap(CategoryProvenance.init(rawValue:)),
-              let payeeID = row[7].text.flatMap(UUID.init(uuidString:)),
-              let payeeName = row[8].text,
-              let categoryID = row[12].text.flatMap(UUID.init(uuidString:)),
-              let categoryName = row[13].text,
-              let categorySpending = row[14].integer
+              let accountID = row[15].text.flatMap(UUID.init(uuidString:)),
+              let accountName = row[16].text
         else {
             throw LedgerError(message: "The ledger returned an entry it could not read.")
         }
         let note = row[5].text
+        let payee: Payee?
+        if let id = row[7].text.flatMap(UUID.init(uuidString:)), let name = row[8].text {
+            payee = Payee(id: Payee.ID(rawValue: id), name: name,
+                defaultCategory: try category(idText: row[9].text, name: row[10].text, spending: row[11].integer))
+        } else { payee = nil }
+        let destination: Account?
+        if let id = row[17].text.flatMap(UUID.init(uuidString:)), let name = row[18].text {
+            destination = Account(id: Account.ID(rawValue: id), name: name)
+        } else { destination = nil }
         return Transaction(
             id: Transaction.ID(rawValue: entryID),
             amount: Cents(Int(cents)),
             kind: kind,
-            payee: Payee(
-                id: Payee.ID(rawValue: payeeID),
-                name: payeeName,
-                defaultCategory: try category(idText: row[9].text, name: row[10].text, spending: row[11].integer)
-            ),
+            payee: payee,
             reportingDate: reportingDate,
-            category: Category(
-                id: Category.ID(rawValue: categoryID),
-                name: categoryName,
-                countsAsSpending: categorySpending != 0
-            ),
+            category: try category(idText: row[12].text, name: row[13].text, spending: row[14].integer),
+            account: Account(id: Account.ID(rawValue: accountID), name: accountName),
+            destinationAccount: destination,
             categoryProvenance: provenance,
             note: note
         )
@@ -173,7 +180,9 @@ extension Ledger {
 
     public func setCategory(_ categoryID: Category.ID, for entryID: Transaction.ID) throws {
         _ = try category(id: categoryID)
-        _ = try transaction(id: entryID)
+        guard try transaction(id: entryID).kind != .transfer else {
+            throw LedgerError(message: "Transfers do not have a category.")
+        }
         try connection.inTransaction {
             try connection.execute(
                 """

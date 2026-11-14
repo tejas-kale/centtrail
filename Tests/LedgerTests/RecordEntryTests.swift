@@ -12,13 +12,14 @@ import Testing
             kind: .expense,
             payee: "REWE",
             reportingDate: reportingDate,
-            categoryID: supermarket.id
+            categoryID: supermarket.id,
+            accountID: try ledger.accounts()[0].id
         )
     )
 
     #expect(recorded.amount == Cents(1250))
     #expect(recorded.kind == .expense)
-    #expect(recorded.payee.name == "REWE")
+    #expect(recorded.payee!.name == "REWE")
     #expect(recorded.category == supermarket)
     #expect(recorded.reportingDate.iso8601 == "2026-11-02")
     #expect(try ledger.transactions() == [recorded])
@@ -31,9 +32,9 @@ import Testing
     let otherRecorded = try recordExpense(other)
 
     #expect(recorded.id != otherRecorded.id)
-    #expect(recorded.payee.id != otherRecorded.payee.id)
+    #expect(recorded.payee!.id != otherRecorded.payee!.id)
     #expect(try ledger.transactions().map(\.id) == [recorded.id])
-    #expect(try ledger.transactions().map(\.payee.id) == [recorded.payee.id])
+    #expect(try ledger.transactions().map(\.payee!.id) == [recorded.payee!.id])
 
     let categoryIDs = try ledger.categories().map(\.id)
     let rereadCategoryIDs = try ledger.categories().map(\.id)
@@ -48,9 +49,9 @@ import Testing
     let first = try recordExpense(ledger, payee: " REWE ")
     let second = try recordExpense(ledger, payee: "REWE")
 
-    #expect(first.payee.id == second.payee.id)
-    #expect(first.payee.name == "REWE")
-    #expect(second.payee.name == "REWE")
+    #expect(first.payee!.id == second.payee!.id)
+    #expect(first.payee!.name == "REWE")
+    #expect(second.payee!.name == "REWE")
     #expect(first.id != second.id)
 }
 
@@ -63,7 +64,8 @@ private func recordExpense(_ ledger: Ledger, payee: String = "REWE") throws -> T
             kind: .expense,
             payee: payee,
             reportingDate: reportingDate,
-            categoryID: supermarket.id
+            categoryID: supermarket.id,
+            accountID: try ledger.accounts()[0].id
         )
     )
 }

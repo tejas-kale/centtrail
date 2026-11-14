@@ -163,9 +163,11 @@ public struct Transaction: Hashable, Sendable, Identifiable {
     public let id: ID
     public let amount: Cents
     public let kind: Kind
-    public let payee: Payee
+    public let payee: Payee?
     public let reportingDate: ReportingDate
-    public let category: Category
+    public let category: Category?
+    public let account: Account
+    public let destinationAccount: Account?
     public let categoryProvenance: CategoryProvenance
     public let note: String?
 
@@ -181,9 +183,11 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         id: ID,
         amount: Cents,
         kind: Kind,
-        payee: Payee,
+        payee: Payee?,
         reportingDate: ReportingDate,
-        category: Category,
+        category: Category?,
+        account: Account,
+        destinationAccount: Account? = nil,
         categoryProvenance: CategoryProvenance = .inherited,
         note: String? = nil
     ) {
@@ -193,6 +197,8 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         self.payee = payee
         self.reportingDate = reportingDate
         self.category = category
+        self.account = account
+        self.destinationAccount = destinationAccount
         self.categoryProvenance = categoryProvenance
         self.note = note
     }
@@ -204,6 +210,8 @@ public enum EntryField: String, Hashable, Sendable {
     case payee
     case reportingDate
     case category
+    case account
+    case destinationAccount
 }
 
 public struct SignedCents: Hashable, Sendable {
@@ -343,6 +351,8 @@ public struct EntryDraft: Equatable, Sendable {
     public var payee: String?
     public var reportingDate: ReportingDate?
     public var categoryID: Category.ID?
+    public var accountID: Account.ID?
+    public var destinationAccountID: Account.ID?
 
     public init(
         amount: Cents? = nil,
@@ -350,6 +360,8 @@ public struct EntryDraft: Equatable, Sendable {
         payee: String? = nil,
         reportingDate: ReportingDate? = nil,
         categoryID: Category.ID? = nil,
+        accountID: Account.ID? = nil,
+        destinationAccountID: Account.ID? = nil,
         overridesCategory: Bool = false,
         note: String? = nil
     ) {
@@ -358,6 +370,8 @@ public struct EntryDraft: Equatable, Sendable {
         self.payee = payee
         self.reportingDate = reportingDate
         self.categoryID = categoryID
+        self.accountID = accountID
+        self.destinationAccountID = destinationAccountID
         self.overridesCategory = overridesCategory
         self.note = note
     }

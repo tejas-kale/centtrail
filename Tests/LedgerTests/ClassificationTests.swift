@@ -6,7 +6,7 @@ import Testing
     let supermarket = try namedCategory(ledger, "Supermarket")
     let recorded = try recordEntry(ledger, cents: 1250, kind: .expense, payee: "REWE", date: "2026-03-02", category: "Supermarket")
     #expect(recorded.categoryProvenance == .inherited)
-    #expect(recorded.payee.defaultCategory == supermarket)
+    #expect(recorded.payee!.defaultCategory == supermarket)
     #expect(try ledger.defaultCategory(forPayeeName: "REWE") == supermarket)
 }
 
@@ -15,18 +15,18 @@ import Testing
     let household = try namedCategory(ledger, "Household Requirements")
     let recorded = try recordEntry(ledger, cents: 1250, kind: .expense, payee: "REWE", date: "2026-01-04", category: "Supermarket")
     try ledger.setCategory(household.id, for: recorded.id)
-    try ledger.setDefaultCategory(try namedCategory(ledger, "Restaurant").id, for: recorded.payee.id)
+    try ledger.setDefaultCategory(try namedCategory(ledger, "Restaurant").id, for: recorded.payee!.id)
     let reread = try ledger.transactions().first { $0.id == recorded.id }
-    #expect(reread?.category.name == "Household Requirements")
+    #expect(reread?.category!.name == "Household Requirements")
     #expect(reread?.categoryProvenance == .overridden)
-    #expect(reread?.payee.defaultCategory?.name == "Restaurant")
+    #expect(reread?.payee!.defaultCategory?.name == "Restaurant")
 }
 
 @Test func changingTheDefaultRecategorizesInheritedEntriesInAPastMonth() throws {
     let ledger = try Ledger.openInMemory()
     let recorded = try recordEntry(ledger, cents: 2000, kind: .expense, payee: "REWE", date: "2026-01-04", category: "Supermarket")
     let restaurant = try namedCategory(ledger, "Restaurant")
-    try ledger.setDefaultCategory(restaurant.id, for: recorded.payee.id)
+    try ledger.setDefaultCategory(restaurant.id, for: recorded.payee!.id)
     let today = try #require(ReportingDate(iso8601: "2026-03-01"))
     let start = try #require(ReportingDate(iso8601: "2026-01-01"))
     let end = try #require(ReportingDate(iso8601: "2026-01-31"))
@@ -38,9 +38,9 @@ import Testing
 @Test func anOverrideToTheSameCategoryIsStillAnOverride() throws {
     let ledger = try Ledger.openInMemory()
     let supermarket = try namedCategory(ledger, "Supermarket")
-    let recorded = try ledger.record(EntryDraft(amount: Cents(100), kind: .expense, payee: "REWE", reportingDate: ReportingDate(iso8601: "2026-03-01"), categoryID: supermarket.id, overridesCategory: true))
+    let recorded = try ledger.record(EntryDraft(amount: Cents(100), kind: .expense, payee: "REWE", reportingDate: ReportingDate(iso8601: "2026-03-01"), categoryID: supermarket.id, accountID: try ledger.accounts()[0].id, overridesCategory: true))
     #expect(recorded.categoryProvenance == .overridden)
-    #expect(recorded.category.id == recorded.payee.defaultCategory?.id)
+    #expect(recorded.category!.id == recorded.payee!.defaultCategory?.id)
 }
 
 @Test func setCategoryOnOneEntryLeavesThePayeeDefault() throws {
@@ -53,13 +53,13 @@ import Testing
     let reread = try ledger.transaction(id: recorded.id)
     #expect(reread.category == household)
     #expect(reread.categoryProvenance == .overridden)
-    #expect(reread.payee.defaultCategory == supermarket)
+    #expect(reread.payee!.defaultCategory == supermarket)
     #expect(try ledger.defaultCategory(forPayeeName: "REWE") == supermarket)
 
     let next = try recordEntry(ledger, cents: 800, kind: .expense, payee: "REWE", date: "2026-03-03", category: "Supermarket")
     #expect(next.categoryProvenance == .inherited)
     #expect(next.category == supermarket)
-    #expect(next.payee.defaultCategory == supermarket)
+    #expect(next.payee!.defaultCategory == supermarket)
 }
 
 @Test func anIncomePayeeOverrideBehavesLikeAnExpensePayeeOverride() throws {
@@ -74,6 +74,7 @@ import Testing
         payee: "Acme",
         reportingDate: ReportingDate(iso8601: "2026-01-10"),
         categoryID: salary.id,
+        accountID: try ledger.accounts()[0].id,
         overridesCategory: true
     ))
     let overridden = try recordEntry(ledger, cents: 40_000, kind: .income, payee: "Acme", date: "2026-01-20", category: "Salary")
@@ -81,12 +82,12 @@ import Testing
 
     #expect(inherited.categoryProvenance == .inherited)
     #expect(sameCategoryOverride.categoryProvenance == .overridden)
-    #expect(sameCategoryOverride.category.id == salary.id)
+    #expect(sameCategoryOverride.category!.id == salary.id)
     #expect(try ledger.transaction(id: overridden.id).category == kindergeld)
     #expect(try ledger.transaction(id: overridden.id).categoryProvenance == .overridden)
     #expect(try ledger.defaultCategory(forPayeeName: "Acme") == salary)
 
-    try ledger.setDefaultCategory(utilities.id, for: inherited.payee.id)
+    try ledger.setDefaultCategory(utilities.id, for: inherited.payee!.id)
     let today = try #require(ReportingDate(iso8601: "2026-03-01"))
     #expect(try ledger.transaction(id: inherited.id).category == utilities)
     #expect(try ledger.transaction(id: inherited.id).categoryProvenance == .inherited)
@@ -102,7 +103,7 @@ import Testing
 
     let later = try recordEntry(ledger, cents: 80_000, kind: .income, payee: "Acme", date: "2026-02-02", category: "Utilities")
     #expect(later.categoryProvenance == .inherited)
-    #expect(later.payee.defaultCategory == utilities)
+    #expect(later.payee!.defaultCategory == utilities)
     try ledger.setCategory(salary.id, for: later.id)
     #expect(try ledger.transaction(id: later.id).category == salary)
     #expect(try ledger.transaction(id: later.id).categoryProvenance == .overridden)

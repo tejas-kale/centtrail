@@ -243,8 +243,8 @@ struct AllTransactionsScreen: View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return model.transactions }
         return model.transactions.filter { tx in
-            tx.payee.name.localizedCaseInsensitiveContains(query)
-                || tx.category.name.localizedCaseInsensitiveContains(query)
+            (tx.payee?.name.localizedCaseInsensitiveContains(query) ?? false)
+                || (tx.category?.name.localizedCaseInsensitiveContains(query) ?? false)
                 || (tx.note?.localizedCaseInsensitiveContains(query) ?? false)
                 || formatEuro(tx.amount.value).localizedCaseInsensitiveContains(query)
         }
@@ -286,6 +286,19 @@ struct AddEntrySheet: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isAmountFocused: Bool
 
+    private var missingFieldMessage: String? {
+        guard Cents(euroText: model.amountText) != nil else { return "Enter an amount." }
+        guard model.accountID != nil else { return "Choose an account." }
+        if model.kind == .transfer {
+            guard let destination = model.destinationAccountID else { return "Choose a destination account." }
+            guard destination != model.accountID else { return "Choose two different accounts." }
+        } else {
+            guard !model.payee.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Enter a payee." }
+            guard model.categoryID != nil else { return "Choose a category." }
+        }
+        return nil
+    }
+
     private var payeeSuggestions: [Payee] {
         let query = model.payee.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return [] }
@@ -306,6 +319,7 @@ struct AddEntrySheet: View {
                     Picker("Kind", selection: $model.kind) {
                         Text("Expense").tag(Kind.expense)
                         Text("Income").tag(Kind.income)
+                        Text("Transfer").tag(Kind.transfer)
                     }
                     .pickerStyle(.segmented)
 
@@ -316,45 +330,56 @@ struct AddEntrySheet: View {
                         #endif
                 }
 
-                Section {
-                    TextField("Payee", text: $model.payee, prompt: Text("Who was paid"))
-                        .onChange(of: model.payee) { _, _ in
-                            model.prefillCategory()
-                        }
+                if model.kind != .transfer {
+                    Section {
+                        TextField("Payee", text: $model.payee, prompt: Text("Who was paid"))
+                            .onChange(of: model.payee) { _, _ in
+                                model.prefillCategory()
+                            }
 
-                    if !payeeSuggestions.isEmpty {
-                        ForEach(payeeSuggestions) { suggestion in
-                            Button {
-                                model.selectSuggestedPayee(suggestion.name)
-                            } label: {
-                                HStack {
-                                    Text(suggestion.name)
-                                    Spacer()
-                                    if let defaultCategory = suggestion.defaultCategory {
-                                        Text(defaultCategory.name)
-                                            .font(.footnote)
-                                            .foregroundStyle(.secondary)
+                        if !payeeSuggestions.isEmpty {
+                            ForEach(payeeSuggestions) { suggestion in
+                                Button {
+                                    model.selectSuggestedPayee(suggestion.name)
+                                } label: {
+                                    HStack {
+                                        Text(suggestion.name)
+                                        Spacer()
+                                        if let defaultCategory = suggestion.defaultCategory {
+                                            Text(defaultCategory.name)
+                                                .font(.footnote)
+                                                .foregroundStyle(.secondary)
+                                        }
                                     }
                                 }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
+                        }
+
+                        Picker("Category", selection: Binding(get: { model.categoryID }, set: { model.categoryID = $0; model.noteManualCategory() })) {
+                            Text("Select").tag(Optional<LedgerCategoryID>.none)
+                            ForEach(model.categories) { category in
+                                Text(category.name).tag(Optional(category.id))
+                            }
+                        }
+
+                    }
+                }
+                Section {
+                    Picker(model.kind == .transfer ? "From account" : "Account", selection: $model.accountID) {
+                        Text("Select").tag(Optional<Account.ID>.none)
+                        ForEach(model.accounts) { account in Text(account.name).tag(Optional(account.id)) }
+                    }
+                    if model.kind == .transfer {
+                        Picker("To account", selection: $model.destinationAccountID) {
+                            Text("Select").tag(Optional<Account.ID>.none)
+                            ForEach(model.accounts.filter { $0.id != model.accountID }) { account in Text(account.name).tag(Optional(account.id)) }
                         }
                     }
-
-                    Picker("Category", selection: $model.categoryID) {
-                        Text("Select").tag(Optional<LedgerCategoryID>.none)
-                        ForEach(model.categories) { category in
-                            Text(category.name).tag(Optional(category.id))
-                        }
-                    }
-                    .onChange(of: model.categoryID) { _, _ in
-                        model.noteManualCategory()
-                    }
-
                     DatePicker("Date", selection: $model.selectedDate, displayedComponents: .date)
                 }
 
-                if let message = model.draftMessage {
+                if let message = model.draftMessage ?? missingFieldMessage {
                     Section {
                         Text(message)
                             .foregroundStyle(.red)
@@ -377,6 +402,7 @@ struct AddEntrySheet: View {
                             dismiss()
                         }
                     }
+                    .disabled(missingFieldMessage != nil)
                 }
             }
             .onAppear {
@@ -390,12 +416,12 @@ struct TransactionDetail: View {
     @ObservedObject var model: CaptureModel
     let transaction: LedgerTransaction
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedCategoryID: LedgerCategoryID
+    @State private var selectedCategoryID: LedgerCategoryID?
 
     init(model: CaptureModel, transaction: LedgerTransaction) {
         self.model = model
         self.transaction = transaction
-        self._selectedCategoryID = State(initialValue: transaction.category.id)
+        self._selectedCategoryID = State(initialValue: transaction.category?.id)
     }
 
     var body: some View {
@@ -414,15 +440,19 @@ struct TransactionDetail: View {
                         .monospacedDigit()
                 }
                 LabeledContent("Kind", value: transaction.kind.rawValue.capitalized)
-                LabeledContent("Payee", value: transaction.payee.name)
-                Picker("Category", selection: $selectedCategoryID) {
-                    ForEach(model.categories) { category in
-                        Text(category.name).tag(category.id)
+                if let payee = transaction.payee { LabeledContent("Payee", value: payee.name) }
+                LabeledContent("Account", value: transaction.account.name)
+                if let destination = transaction.destinationAccount { LabeledContent("To account", value: destination.name) }
+                if transaction.kind != .transfer {
+                    Picker("Category", selection: $selectedCategoryID) {
+                        ForEach(model.categories) { category in
+                            Text(category.name).tag(Optional(category.id))
+                        }
                     }
-                }
-                .onChange(of: selectedCategoryID) { _, newValue in
-                    guard newValue != transaction.category.id else { return }
-                    model.updateCategory(newValue, for: transaction.id)
+                    .onChange(of: selectedCategoryID) { _, newValue in
+                        guard let newValue, newValue != transaction.category?.id else { return }
+                        model.updateCategory(newValue, for: transaction.id)
+                    }
                 }
                 LabeledContent("Reporting date", value: transaction.reportingDate.iso8601)
                 if let note = transaction.note, !note.isEmpty {
@@ -439,7 +469,7 @@ struct TransactionDetail: View {
                 }
             }
         }
-        .navigationTitle(transaction.payee.name)
+        .navigationTitle(transaction.payee?.name ?? "Transfer")
     }
 }
 
@@ -449,6 +479,9 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             List {
+                NavigationLink("Accounts") {
+                    AccountsScreen(model: model)
+                }
                 NavigationLink("Categories") {
                     CategoriesScreen(model: model)
                 }
@@ -701,8 +734,8 @@ struct TrashScreen: View {
                 ForEach(entries) { entry in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.transaction.payee.name)
-                            Text("\(entry.transaction.category.name) · \(entry.transaction.reportingDate.iso8601)")
+                            Text(entry.transaction.payee?.name ?? "Transfer")
+                            Text("\(entry.transaction.category?.name ?? "Transfer") · \(entry.transaction.reportingDate.iso8601)")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                             Text("\(entry.daysRemaining) \(entry.daysRemaining == 1 ? "day" : "days") remaining")

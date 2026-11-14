@@ -83,7 +83,7 @@ import Testing
 @Test func searchFindsAnAliasAndAnAmountAndSkipsTrash() throws {
     let ledger = try Ledger.openInMemory()
     let amazon = try recordEntry(ledger, cents: 8_000, kind: .expense, payee: "Amazon", date: "2026-01-02", category: "Supermarket")
-    try ledger.confirmAlias("AMZN MKTP", of: amazon.payee.id)
+    try ledger.confirmAlias("AMZN MKTP", of: amazon.payee!.id)
     let trashed = try recordEntry(ledger, cents: 9_000, kind: .expense, payee: "Amazon", date: "2026-01-03", category: "Supermarket")
     try ledger.trash(trashed.id, on: try #require(ReportingDate(iso8601: "2026-01-04")))
     let today = try #require(ReportingDate(iso8601: "2026-02-01"))

@@ -17,6 +17,9 @@ final class CaptureModel: ObservableObject {
     @Published var payee = ""
     @Published var selectedDate: Date
     @Published var categoryID: LedgerCategoryID?
+    @Published var accountID: Account.ID?
+    @Published var destinationAccountID: Account.ID?
+    @Published var accounts: [Account] = []
     @Published var categories: [LedgerCategory] = []
     @Published var payees: [Payee] = []
     @Published var transactions: [LedgerTransaction] = []
@@ -36,6 +39,7 @@ final class CaptureModel: ObservableObject {
         self.today = today
         self.selectedDate = Self.date(from: today)
         try reload()
+        accountID = accounts.first?.id
         newEntryObserver = NotificationCenter.default.addObserver(forName: .centtrailNewEntry, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -70,6 +74,8 @@ final class CaptureModel: ObservableObject {
         payee = ""
         selectedDate = Self.date(from: today)
         categoryID = nil
+        accountID = accounts.first?.id
+        destinationAccountID = accounts.first(where: { $0.name == "India" })?.id
         categoryChosenManually = false
         draftMessage = nil
     }
@@ -123,7 +129,9 @@ final class CaptureModel: ObservableObject {
             kind: kind,
             payee: payee,
             reportingDate: civilDate(selectedDate, calendar: .current),
-            categoryID: categoryID,
+            categoryID: kind == .transfer ? nil : categoryID,
+            accountID: accountID,
+            destinationAccountID: kind == .transfer ? destinationAccountID : nil,
             overridesCategory: categoryChosenManually
         )
         do {
@@ -179,6 +187,7 @@ final class CaptureModel: ObservableObject {
 
     private func reload() throws {
         try ledger.purgeExpiredTrash(today: today)
+        accounts = try ledger.accounts()
         categories = try ledger.categories()
         payees = try ledger.payees()
         transactions = try ledger.transactions()
@@ -256,8 +265,8 @@ struct TransactionRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(transaction.payee.name)
-                Text("\(transaction.category.name) · \(transaction.reportingDate.iso8601)")
+                Text(transaction.payee?.name ?? "Transfer")
+                Text("\(transaction.account.name)\(transaction.destinationAccount.map { " → \($0.name)" } ?? "") · \(transaction.reportingDate.iso8601)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -327,7 +336,7 @@ func shortRangeLabel(_ range: DateRange) -> String {
 private func refusalMessage(_ error: RecordEntryError) -> String {
     switch error {
     case .incomplete(let fields):
-        let ordered: [EntryField] = [.amount, .kind, .payee, .reportingDate, .category]
+        let ordered: [EntryField] = [.amount, .kind, .payee, .reportingDate, .category, .account, .destinationAccount]
         let missing = ordered.filter(fields.contains).map(fieldName)
         return "Enter \(missing.joined(separator: ", "))."
     case .unknownCategory:
@@ -344,5 +353,7 @@ private func fieldName(_ field: EntryField) -> String {
     case .payee: "a payee"
     case .reportingDate: "a reporting date"
     case .category: "a category"
+    case .account: "an account"
+    case .destinationAccount: "a destination account"
     }
 }

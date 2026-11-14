@@ -10,7 +10,7 @@ import Testing
     let overridden = try recordEntry(ledger, cents: 4500, kind: .expense, payee: "Amazon", date: "2026-01-15", category: "Supermarket")
     try ledger.setCategory(electronics.id, for: overridden.id)
 
-    try ledger.setDefaultCategory(shopping.id, for: inherited.payee.id)
+    try ledger.setDefaultCategory(shopping.id, for: inherited.payee!.id)
 
     let rereadInherited = try ledger.transaction(id: inherited.id)
     let rereadOverridden = try ledger.transaction(id: overridden.id)
@@ -25,18 +25,18 @@ import Testing
     let ledger = try Ledger.openInMemory()
     let amazon = try recordEntry(ledger, cents: 1500, kind: .expense, payee: "Amazon", date: "2026-02-01", category: "Shopping")
     let amzn = try recordEntry(ledger, cents: 2500, kind: .expense, payee: "AMZN MKTP", date: "2026-02-02", category: "Supermarket")
-    try ledger.confirmAlias("AMZN*123", of: amzn.payee.id)
+    try ledger.confirmAlias("AMZN*123", of: amzn.payee!.id)
 
-    try ledger.mergePayees(sourceID: amzn.payee.id, into: amazon.payee.id)
+    try ledger.mergePayees(sourceID: amzn.payee!.id, into: amazon.payee!.id)
 
     #expect(try ledger.payees().map(\.name) == ["Amazon"])
     let moved = try ledger.transaction(id: amzn.id)
-    #expect(moved.payee.id == amazon.payee.id)
-    #expect(moved.payee.name == "Amazon")
+    #expect(moved.payee!.id == amazon.payee!.id)
+    #expect(moved.payee!.name == "Amazon")
 
     let aliases = try ledger.confirmedAliases()
-    #expect(aliases.contains { $0.name == "AMZN MKTP" && $0.payeeID == amazon.payee.id })
-    #expect(aliases.contains { $0.name == "AMZN*123" && $0.payeeID == amazon.payee.id })
+    #expect(aliases.contains { $0.name == "AMZN MKTP" && $0.payeeID == amazon.payee!.id })
+    #expect(aliases.contains { $0.name == "AMZN*123" && $0.payeeID == amazon.payee!.id })
 }
 
 @Test func laterEntryAndImportTypedAsMergedNameResolveToSurvivingPayee() throws {
@@ -44,11 +44,11 @@ import Testing
     let amazon = try recordEntry(ledger, cents: 1500, kind: .expense, payee: "Amazon", date: "2026-02-01", category: "Shopping")
     let amzn = try recordEntry(ledger, cents: 2500, kind: .expense, payee: "AMZN MKTP", date: "2026-02-02", category: "Shopping")
 
-    try ledger.mergePayees(sourceID: amzn.payee.id, into: amazon.payee.id)
+    try ledger.mergePayees(sourceID: amzn.payee!.id, into: amazon.payee!.id)
 
     let laterEntry = try recordEntry(ledger, cents: 990, kind: .expense, payee: "AMZN MKTP", date: "2026-02-10", category: "Shopping")
-    #expect(laterEntry.payee.id == amazon.payee.id)
-    #expect(laterEntry.payee.name == "Amazon")
+    #expect(laterEntry.payee!.id == amazon.payee!.id)
+    #expect(laterEntry.payee!.name == "Amazon")
 
     let csv = """
     Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
@@ -62,8 +62,8 @@ import Testing
     #expect(try ledger.proposedPayeeDefaults().isEmpty)
 
     let imported = try ledger.transactions().first { $0.reportingDate.iso8601 == "2026-03-01" }
-    #expect(imported?.payee.id == amazon.payee.id)
-    #expect(imported?.payee.name == "Amazon")
+    #expect(imported?.payee!.id == amazon.payee!.id)
+    #expect(imported?.payee!.name == "Amazon")
 }
 
 @Test func mergingPayeeWithProposedDefaultCleansUpProposalAndRejectsSelfMerge() throws {
@@ -78,10 +78,10 @@ import Testing
     let proposal = try #require(try ledger.proposedPayeeDefaults().first { $0.payee == "AMZN MKTP" })
 
     #expect(throws: LedgerError.self) {
-        try ledger.mergePayees(sourceID: amazon.payee.id, into: amazon.payee.id)
+        try ledger.mergePayees(sourceID: amazon.payee!.id, into: amazon.payee!.id)
     }
 
-    try ledger.mergePayees(sourceID: proposal.payeeID, into: amazon.payee.id)
+    try ledger.mergePayees(sourceID: proposal.payeeID, into: amazon.payee!.id)
     #expect(try ledger.proposedPayeeDefaults().isEmpty)
     #expect(try ledger.payees().map(\.name) == ["Amazon"])
 }

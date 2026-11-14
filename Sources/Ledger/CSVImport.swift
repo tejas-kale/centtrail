@@ -191,6 +191,7 @@ extension Ledger {
                 payee: payee,
                 reportingDate: fingerprint.reportingDate,
                 categoryID: category!.id,
+                accountID: try accounts()[0].id,
                 note: fingerprint.note
             )
             classified.append(ClassifiedImport(

@@ -4,10 +4,10 @@
 
 **Blocked by:** 04, 05
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] Accounts are seeded with N26, Revolut, Cash and India, and can be added, renamed and removed in Settings
-- [ ] Removing an account in use is refused with a message
-- [ ] Expense and income entries require an account; transfers require two different accounts
-- [ ] A €500 N26 → India transfer appears in the transaction list and never in spending
-- [ ] Ledger tests cover account requirements, transfer validation and spending exclusion
+- [x] Accounts are seeded with N26, Revolut, Cash and India, and can be added, renamed and removed in Settings
+- [x] Removing an account in use is refused with a message
+- [x] Expense and income entries require an account; transfers require two different accounts
+- [x] A €500 N26 → India transfer appears in the transaction list and never in spending
+- [x] Ledger tests cover account requirements, transfer validation and spending exclusion

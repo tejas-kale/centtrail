@@ -48,18 +48,19 @@ import Testing
         kind: .expense,
         payee: "Fressnapf",
         reportingDate: date,
-        categoryID: pets.id
+        categoryID: pets.id,
+        accountID: try ledger.accounts()[0].id
     ))
-    #expect(recorded.category.id == pets.id)
-    #expect(recorded.category.name == "Pets")
+    #expect(recorded.category!.id == pets.id)
+    #expect(recorded.category!.name == "Pets")
 
     let renamed = try ledger.renameCategory(id: pets.id, to: "Animals")
     #expect(renamed.id == pets.id)
     #expect(renamed.name == "Animals")
 
     let fetched = try ledger.transaction(id: recorded.id)
-    #expect(fetched.category.id == pets.id)
-    #expect(fetched.category.name == "Animals")
+    #expect(fetched.category!.id == pets.id)
+    #expect(fetched.category!.name == "Animals")
 
     let payee = try #require(try ledger.payees().first { $0.name == "Fressnapf" })
     #expect(payee.defaultCategory?.name == "Animals")
