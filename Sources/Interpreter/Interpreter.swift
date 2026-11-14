@@ -32,17 +32,20 @@ public struct InterpretationContext: Sendable {
     public let categories: [Category]
     public let payees: [Payee]
     public let aliasNames: [String]
+    public let accounts: [Account]
 
     public init(
         today: ReportingDate,
         categories: [Category],
         payees: [Payee],
-        aliasNames: [String] = []
+        aliasNames: [String] = [],
+        accounts: [Account] = []
     ) {
         self.today = today
         self.categories = categories
         self.payees = payees
         self.aliasNames = aliasNames
+        self.accounts = accounts
     }
 }
 
@@ -175,7 +178,14 @@ public struct KeywordLanguageModelBackend: LanguageModelBackend {
     public func interpretCapture(_ text: String, context: InterpretationContext) throws -> EntryDraft {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
-        let kind: Kind = lower.contains("income") || lower.contains("from ") ? .income : .expense
+        let kind: Kind?
+        if lower.contains("income") || lower.contains("from ") || lower.contains("refund") {
+            kind = .income
+        } else if lower.contains("expense") || lower.contains("spent") || lower.contains("paid") {
+            kind = .expense
+        } else {
+            kind = nil
+        }
         let amount = firstAmount(in: trimmed)
         let name = capturePayee(in: trimmed)
         let date = captureDate(in: lower, today: context.today)
@@ -184,12 +194,17 @@ public struct KeywordLanguageModelBackend: LanguageModelBackend {
             context.payees.first { $0.name.caseInsensitiveCompare(candidate) == .orderedSame }?.defaultCategory
         }
         let category = mentionedCategory ?? payeeDefault
+        let account = context.accounts.sorted { $0.name.count > $1.name.count }.first { account in
+            let name = NSRegularExpression.escapedPattern(for: account.name)
+            return lower.range(of: "\\b(?:with|using|via)\\s+\(name.lowercased())\\b", options: .regularExpression) != nil
+        }
         return EntryDraft(
             amount: amount,
             kind: kind,
             payee: name,
             reportingDate: date,
             categoryID: category?.id,
+            accountID: account?.id,
             overridesCategory: mentionedCategory != nil
         )
     }
@@ -269,7 +284,7 @@ public struct KeywordLanguageModelBackend: LanguageModelBackend {
 
     private func tailName(_ text: Substring) -> String? {
         var name = String(text)
-        for marker in [" yesterday", " today", " on "] {
+        for marker in [" yesterday", " today", " on ", " with ", " using ", " via "] {
             if let range = name.lowercased().range(of: marker) {
                 name = String(name[..<range.lowerBound])
             }
@@ -284,7 +299,7 @@ public struct KeywordLanguageModelBackend: LanguageModelBackend {
         if let range = lower.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression) {
             return ReportingDate(iso8601: String(lower[range]))
         }
-        return today
+        return nil
     }
 
     private func searchQuery(
@@ -361,16 +376,32 @@ public struct Interpreter {
         return try await backend.interpretReportAsync(text, context: context, resolvedName: resolvedName)
     }
 
-    public func interpretCapture(_ text: String) throws -> CaptureInterpretation {
+    public func interpretCapture(_ text: String, defaults: EntryDraft? = nil) throws -> CaptureInterpretation {
         let context = try makeContext()
         let draft = try backend.interpretCapture(text, context: context)
-        return CaptureInterpretation(draft: draft, modelUnavailable: backend.modelUnavailableReason)
+        return CaptureInterpretation(draft: mergedCapture(draft, defaults: defaults), modelUnavailable: backend.modelUnavailableReason)
     }
 
-    public func interpretCaptureAsync(_ text: String) async throws -> CaptureInterpretation {
+    nonisolated(nonsending) public func interpretCaptureAsync(_ text: String, defaults: EntryDraft? = nil) async throws -> CaptureInterpretation {
         let context = try makeContext()
         let draft = try await backend.interpretCaptureAsync(text, context: context)
-        return CaptureInterpretation(draft: draft, modelUnavailable: backend.modelUnavailableReason)
+        return CaptureInterpretation(draft: mergedCapture(draft, defaults: defaults), modelUnavailable: backend.modelUnavailableReason)
+    }
+
+    private func mergedCapture(_ mentioned: EntryDraft, defaults: EntryDraft?) -> EntryDraft {
+        let defaults = defaults ?? EntryDraft(kind: .expense, reportingDate: today)
+        let kind = mentioned.kind ?? defaults.kind
+        return EntryDraft(
+            amount: mentioned.amount ?? defaults.amount,
+            kind: kind,
+            payee: mentioned.payee ?? defaults.payee,
+            reportingDate: mentioned.reportingDate ?? defaults.reportingDate,
+            categoryID: mentioned.categoryID ?? defaults.categoryID,
+            accountID: mentioned.accountID ?? defaults.accountID,
+            destinationAccountID: kind == .transfer ? (mentioned.destinationAccountID ?? defaults.destinationAccountID) : nil,
+            overridesCategory: mentioned.categoryID == nil ? defaults.overridesCategory : mentioned.overridesCategory,
+            note: mentioned.note ?? defaults.note
+        )
     }
 
     public func score(_ actual: ReportInterpretation, expected: ReportInterpretation) -> InterpretationScore {
@@ -392,7 +423,8 @@ public struct Interpreter {
             today: today,
             categories: try ledger.categories(),
             payees: try ledger.payees(),
-            aliasNames: try ledger.confirmedAliases().map(\.name)
+            aliasNames: try ledger.confirmedAliases().map(\.name),
+            accounts: try ledger.accounts()
         )
     }
 

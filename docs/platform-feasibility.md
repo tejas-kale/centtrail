@@ -115,3 +115,22 @@ Physical iPhone Air timings (cold and warm end-to-end latency) and live on-devic
 ## Local validation boundary
 
 The local `swift test` suite runs and passes on macOS in this workspace, but live CloudKit two-device sync and on-device Foundation Models behavior require signed Apple app targets and physical hardware (iPhone Air and Mac) and were not run in this session.
+
+
+## Voice capture (ticket 14, 2026-11-14)
+
+The + form has a mic/Stop action for expense and income. Recognition uses `SFSpeechRecognizer` only when `supportsOnDeviceRecognition` is true, and every request sets `requiresOnDeviceRecognition = true`. It refuses unsupported local languages instead of sending audio to a server. Apple's [on-device requirement](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition) is honored only on supported recognizers; speech authorization is still required [even for on-device requests](https://developer.apple.com/documentation/speech/asking-permission-to-use-speech-recognition).
+
+The app requests microphone and speech authorization on first mic use. Both app hosts supply usage explanations, and the Mac sandbox allows audio input and speech recognition. Denial or an unavailable recognizer leaves manual entry available with an actionable message. Closing the sheet stops audio and discards pending interpretation; Stop fills a draft for review and never records an entry.
+
+Deterministic `VoiceCaptureTests` verify fallback payee/account/category/date extraction, generated-model account mapping, preservation of unmentioned form fields and no writes during interpretation. These pass as part of the 82-test deterministic package suite before merging the later chip/import tickets. No live microphone or physical-device check was executed in this CLI session.
+
+Manual checks still to run on iPhone Air and Mac:
+
+- [ ] Tap the mic for the first time: the microphone and speech reasons are clear; allow each and confirm the listening state.
+- [ ] Say “20 euros at Middle Eats with Revolut”, then Stop. Check amount, payee, category and account; change fields if necessary. No ledger row appears until Save.
+- [ ] Select a different kind/date/account, then dictate only an amount. Unmentioned selections remain unchanged.
+- [ ] With Apple Intelligence off, say the same payee/amount sentence with “yesterday”. The keyword parser fills the fields and preserves the account when it is not mentioned.
+- [ ] Deny microphone or speech permission and confirm the message explains how to re-enable access; manual Save still works.
+- [ ] Dismiss the sheet while listening and while the model is filling fields. Recording stops and a later sheet opens with a clean draft.
+- [ ] Test an unsupported local dictation language and confirm no remote fallback occurs.

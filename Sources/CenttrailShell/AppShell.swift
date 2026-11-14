@@ -285,6 +285,7 @@ struct AddEntrySheet: View {
     @ObservedObject var model: CaptureModel
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isAmountFocused: Bool
+    @StateObject private var voice = VoiceCapture()
 
     private var missingFieldMessage: String? {
         guard Cents(euroText: model.amountText) != nil else { return "Enter an amount." }
@@ -315,6 +316,35 @@ struct AddEntrySheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Button {
+                        if voice.isRecording {
+                            voice.finish()
+                        } else {
+                            Task {
+                                await voice.start(contextualStrings: Array((model.payees.map(\.name) + model.accounts.map(\.name)).prefix(100)))
+                            }
+                        }
+                    } label: {
+                        Label(voice.isRecording ? "Stop listening" : "Fill from speech", systemImage: voice.isRecording ? "stop.circle.fill" : "mic")
+                    }
+                    .disabled(voice.isPreparing || model.isInterpretingSpeech || model.kind == .transfer)
+                    .accessibilityHint("Fills the form from on-device speech. Review the fields and tap Save to record the transaction.")
+                    if voice.isPreparing {
+                        ProgressView("Preparing microphone")
+                    } else if voice.isRecording {
+                        Text("Listening… Tap Stop when you're finished.")
+                            .foregroundStyle(.secondary)
+                    } else if model.isInterpretingSpeech {
+                        ProgressView("Filling the form")
+                    }
+                    if !voice.transcript.isEmpty {
+                        Text(voice.transcript)
+                        Text("Review the fields, then tap Save.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Section {
                     Picker("Kind", selection: $model.kind) {
                         Text("Expense").tag(Kind.expense)
@@ -386,6 +416,7 @@ struct AddEntrySheet: View {
                     }
                 }
             }
+            .disabled(model.isInterpretingSpeech)
             .navigationTitle("New transaction")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -402,11 +433,25 @@ struct AddEntrySheet: View {
                             dismiss()
                         }
                     }
-                    .disabled(missingFieldMessage != nil)
+                    .disabled(missingFieldMessage != nil || voice.isRecording || voice.isPreparing || model.isInterpretingSpeech)
                 }
             }
             .onAppear {
                 isAmountFocused = true
+            }
+            .onChange(of: voice.completedTranscript) { _, text in
+                guard let text else { return }
+                Task { await model.interpretSpeech(text) }
+            }
+            .onChange(of: voice.errorMessage) { _, message in
+                if let message { model.draftMessage = message }
+            }
+            .onChange(of: model.kind) { _, kind in
+                if kind == .transfer { voice.cancel() }
+            }
+            .onDisappear {
+                voice.cancel()
+                model.cancelSpeechInterpretation()
             }
         }
     }
