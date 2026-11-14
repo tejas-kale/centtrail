@@ -188,7 +188,7 @@ private struct AppTabShell: View {
                 HomeScreen(model: model)
             }
             Tab("Ask", systemImage: "sparkles") {
-                AskScreen()
+                AskScreen(model: model)
             }
             Tab("Settings", systemImage: "gearshape") {
                 SettingsScreen(model: model)

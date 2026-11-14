@@ -35,7 +35,7 @@ let package = Package(
         ),
         .testTarget(
             name: "LedgerTests",
-            dependencies: ["Ledger", "Interpreter"],
+            dependencies: ["Ledger", "Interpreter", "CenttrailShell"],
             resources: [
                 .copy("Fixtures"),
             ],
