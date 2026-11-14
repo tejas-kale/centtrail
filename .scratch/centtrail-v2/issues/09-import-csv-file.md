@@ -4,7 +4,7 @@
 
 **Blocked by:** 06
 
-**Status:** in-progress
+**Status:** done
 
 - [ ] Importing the sample export creates transactions with N26, Revolut and Cash accounts
 - [ ] Positive rows import as income; non-EUR rows are rejected with a reason

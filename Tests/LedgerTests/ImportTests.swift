@@ -33,6 +33,7 @@ import Testing
     #expect(try ledger.defaultCategory(forPayeeName: "Middle Eats")?.name == "Restaurant")
     #expect(try ledger.defaultCategory(forPayeeName: "WinSIM")?.name == "Utilities")
     let booking = try #require(try ledger.transactions().first { $0.payee!.name == "Booking" })
+    #expect(Set(try ledger.transactions().map(\.account.name)) == ["N26", "Revolut", "Cash"])
     #expect(booking.note == "For the stay on April 29-30")
     #expect(booking.reportingDate.iso8601 == "2025-02-16")
     #expect(preview[0].amountText == "4164.84")
@@ -53,13 +54,12 @@ import Testing
     #expect(unknown.contains("Unknown category Not A Category."))
     guard case .needsCorrection(let currency) = preview[1].state else { Issue.record("currency"); return }
     #expect(currency.contains("Only EUR at rate 1.0 can be imported."))
-    guard case .needsCorrection(let positive) = preview[2].state else { Issue.record("positive"); return }
-    #expect(positive.contains("A positive amount in an expense category is held until the refund and transfer format is confirmed."))
+    #expect(preview[2].state == .ready)
     #expect(preview[3].state == .ready)
     #expect(preview[3].reportingDate == "2026-05-01")
     #expect(preview[4].state == .uncertainMatch)
-    #expect(try ledger.commitImport(csv, uncertain: [4: .keep]).importedCount == 2)
-    #expect(try ledger.transactions().count == 2)
+    #expect(try ledger.commitImport(csv, uncertain: [4: .keep]).importedCount == 3)
+    #expect(try ledger.transactions().count == 3)
 }
 
 @Test func theOwnerCanChooseAnotherReportingDateColumn() throws {
@@ -142,4 +142,52 @@ import Testing
     #expect(try ledger.commitImport(csv, acceptedPayees: ["Cafe"]).importedCount == 1)
     #expect(try ledger.defaultCategory(forPayeeName: "Cafe")?.name == "Restaurant")
     #expect(try ledger.proposedPayeeDefaults().isEmpty)
+}
+
+@Test func aRefundImportsAsIncomeIntoANewAccountWithoutChangingPreview() throws {
+    let ledger = try Ledger.openInMemory()
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-02T10:00:00+0100,100.00,EUR,EUR,1.0,Amazon,Shopping,New Bank,Refund
+    """
+    let preview = try ledger.previewImport(csv)
+    #expect(preview.first?.state == .ready)
+    #expect(try !ledger.accounts().contains { $0.name == "New Bank" })
+    #expect(try ledger.commitImport(csv).importedCount == 1)
+    let transaction = try #require(try ledger.transactions().first)
+    #expect(transaction.kind == .income)
+    #expect(transaction.amount == Cents(10000))
+    #expect(transaction.account.name == "New Bank")
+    #expect(try ledger.commitImport(csv).importedCount == 0)
+}
+
+@Test func importSummaryCountsReadyUncertainAndInvalidRows() throws {
+    let ledger = try Ledger.openInMemory()
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-02T10:00:00+0100,-10.00,EUR,EUR,1.0,Cafe,Restaurant,Cash,
+    2026-11-02T11:00:00+0100,-10.00,EUR,EUR,1.0,Cafe,Restaurant,Cash,
+    2026-11-03T10:00:00+0100,-20.00,INR,INR,90,Cafe,Restaurant,Cash,
+    """
+    let preview = try ledger.previewImport(csv)
+    #expect(preview.map(\.proposedDefaultCategoryName) == ["Restaurant", nil, nil])
+    let result = try ledger.commitImport(csv, uncertain: [1: .skip], acceptedPayees: ["Cafe"])
+    #expect(result.importedCount == 1)
+    #expect(result.skippedCount == 2)
+    #expect(try ledger.defaultCategory(forPayeeName: "Cafe")?.name == "Restaurant")
+    #expect(try ledger.proposedPayeeDefaults().isEmpty)
+}
+
+@Test func importRequiresAnAccountAndAPositiveMagnitude() throws {
+    let ledger = try Ledger.openInMemory()
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-02T10:00:00+0100,-10.00,EUR,EUR,1.0,Cafe,Restaurant,,
+    2026-11-02T11:00:00+0100,0.00,EUR,EUR,1.0,Cafe,Restaurant,Cash,
+    """
+    let preview = try ledger.previewImport(csv)
+    #expect(preview.allSatisfy { if case .needsCorrection = $0.state { true } else { false } })
+    let result = try ledger.commitImport(csv)
+    #expect(result.importedCount == 0)
+    #expect(result.skippedCount == 2)
 }
