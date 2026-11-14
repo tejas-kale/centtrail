@@ -54,12 +54,30 @@ public protocol LanguageModelBackend: Sendable {
         context: InterpretationContext,
         resolvedName: String?
     ) throws -> ReportInterpretation
+    func interpretReportAsync(
+        _ text: String,
+        context: InterpretationContext,
+        resolvedName: String?
+    ) async throws -> ReportInterpretation
     func interpretCapture(_ text: String, context: InterpretationContext) throws -> EntryDraft
+    func interpretCaptureAsync(_ text: String, context: InterpretationContext) async throws -> EntryDraft
 }
 
 public extension LanguageModelBackend {
     func interpretReport(_ text: String, context: InterpretationContext) throws -> ReportInterpretation {
         try interpretReport(text, context: context, resolvedName: nil)
+    }
+
+    func interpretReportAsync(
+        _ text: String,
+        context: InterpretationContext,
+        resolvedName: String?
+    ) async throws -> ReportInterpretation {
+        try interpretReport(text, context: context, resolvedName: resolvedName)
+    }
+
+    func interpretCaptureAsync(_ text: String, context: InterpretationContext) async throws -> EntryDraft {
+        try interpretCapture(text, context: context)
     }
 }
 
@@ -314,7 +332,7 @@ public struct Interpreter {
     public init(
         ledger: Ledger,
         today: ReportingDate,
-        backend: any LanguageModelBackend = KeywordLanguageModelBackend()
+        backend: any LanguageModelBackend = AppleFoundationModelBackend()
     ) {
         self.ledger = ledger
         self.today = today
@@ -338,9 +356,20 @@ public struct Interpreter {
         return try backend.interpretReport(text, context: context, resolvedName: resolvedName)
     }
 
+    public func interpretReportAsync(_ text: String, resolvedName: String? = nil) async throws -> ReportInterpretation {
+        let context = try makeContext()
+        return try await backend.interpretReportAsync(text, context: context, resolvedName: resolvedName)
+    }
+
     public func interpretCapture(_ text: String) throws -> CaptureInterpretation {
         let context = try makeContext()
         let draft = try backend.interpretCapture(text, context: context)
+        return CaptureInterpretation(draft: draft, modelUnavailable: backend.modelUnavailableReason)
+    }
+
+    public func interpretCaptureAsync(_ text: String) async throws -> CaptureInterpretation {
+        let context = try makeContext()
+        let draft = try await backend.interpretCaptureAsync(text, context: context)
         return CaptureInterpretation(draft: draft, modelUnavailable: backend.modelUnavailableReason)
     }
 
@@ -358,7 +387,7 @@ public struct Interpreter {
         }
     }
 
-    private func makeContext() throws -> InterpretationContext {
+    public func makeContext() throws -> InterpretationContext {
         InterpretationContext(
             today: today,
             categories: try ledger.categories(),
