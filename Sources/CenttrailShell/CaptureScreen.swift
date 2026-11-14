@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Interpreter
 import Ledger
 import SwiftUI
 
@@ -32,12 +33,14 @@ final class CaptureModel: ObservableObject {
     @Published var isPresentingAddSheet = false
     @Published var draftMessage: String?
     @Published var errorMessage: String?
+    @Published private(set) var isInterpretingSpeech = false
 
     private var applyingPrefill = false
     private var categoryChosenManually = false
     nonisolated(unsafe) private var newEntryObserver: NSObjectProtocol?
     private var ledgerObservation: LedgerObservation?
     private var reloadScheduled = false
+    private var speechInterpretationID: UUID?
 
     init(ledger: Ledger, today: ReportingDate) throws {
         self.ledger = ledger
@@ -74,6 +77,7 @@ final class CaptureModel: ObservableObject {
     }
 
     func clearDraft() {
+        cancelSpeechInterpretation()
         amountText = ""
         kind = .expense
         payee = ""
@@ -136,16 +140,7 @@ final class CaptureModel: ObservableObject {
 
     @discardableResult
     func save() -> Bool {
-        let draft = EntryDraft(
-            amount: Cents(euroText: amountText),
-            kind: kind,
-            payee: payee,
-            reportingDate: civilDate(selectedDate, calendar: .current),
-            categoryID: kind == .transfer ? nil : categoryID,
-            accountID: accountID,
-            destinationAccountID: kind == .transfer ? destinationAccountID : nil,
-            overridesCategory: categoryChosenManually
-        )
+        let draft = currentDraft
         do {
             _ = try ledger.record(draft)
             clearDraft()
@@ -158,6 +153,52 @@ final class CaptureModel: ObservableObject {
             draftMessage = error.localizedDescription
             return false
         }
+    }
+
+    private var currentDraft: EntryDraft {
+        EntryDraft(
+            amount: Cents(euroText: amountText),
+            kind: kind,
+            payee: payee,
+            reportingDate: civilDate(selectedDate, calendar: .current),
+            categoryID: kind == .transfer ? nil : categoryID,
+            accountID: accountID,
+            destinationAccountID: kind == .transfer ? destinationAccountID : nil,
+            overridesCategory: categoryChosenManually
+        )
+    }
+
+    func interpretSpeech(_ text: String) async {
+        let id = UUID()
+        speechInterpretationID = id
+        isInterpretingSpeech = true
+        draftMessage = nil
+        let defaults = currentDraft
+        defer { if speechInterpretationID == id { isInterpretingSpeech = false } }
+        do {
+            let interpretation = try await Interpreter(ledger: ledger, today: today)
+                .interpretCaptureAsync(text, defaults: defaults)
+            guard speechInterpretationID == id else { return }
+            let draft = interpretation.draft
+            if let amount = draft.amount {
+                amountText = "\(amount.value / 100).\(String(format: "%02d", amount.value % 100))"
+            }
+            if let kind = draft.kind { self.kind = kind }
+            if let payee = draft.payee { self.payee = payee }
+            if let date = draft.reportingDate { selectedDate = Self.date(from: date) }
+            categoryID = draft.categoryID
+            categoryChosenManually = draft.overridesCategory
+            accountID = draft.accountID
+            destinationAccountID = draft.destinationAccountID
+        } catch {
+            guard speechInterpretationID == id else { return }
+            draftMessage = "The spoken entry could not be filled: \(error.localizedDescription). Try again or enter it by hand."
+        }
+    }
+
+    func cancelSpeechInterpretation() {
+        speechInterpretationID = nil
+        isInterpretingSpeech = false
     }
 
     func trash(_ transaction: LedgerTransaction) {

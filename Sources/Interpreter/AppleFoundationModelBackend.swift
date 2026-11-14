@@ -100,8 +100,8 @@ public struct GeneratedCaptureDraft: Sendable, Equatable {
     @Guide(description: "Amount in euros (positive number), or nil if not stated.")
     public var amountEuros: Double?
 
-    @Guide(description: "Whether this is an expense or income.")
-    public var kind: EntryKind
+    @Guide(description: "Expense or income only if the sentence explicitly indicates one; otherwise nil to keep the form's selected kind.")
+    public var kind: EntryKind?
 
     @Guide(description: "Payee name, or nil if not stated.")
     public var payee: String?
@@ -112,15 +112,19 @@ public struct GeneratedCaptureDraft: Sendable, Equatable {
     @Guide(description: "Exact category name from the provided categories list if explicitly mentioned, or nil.")
     public var categoryName: String?
 
+    @Guide(description: "Exact account name from the provided accounts list if explicitly mentioned, such as Revolut in 'with Revolut'; otherwise nil.")
+    public var accountName: String?
+
     @Guide(description: "Optional short note, or nil.")
     public var note: String?
 
     public init(
         amountEuros: Double? = nil,
-        kind: EntryKind = .expense,
+        kind: EntryKind? = nil,
         payee: String? = nil,
         reportingDate: String? = nil,
         categoryName: String? = nil,
+        accountName: String? = nil,
         note: String? = nil
     ) {
         self.amountEuros = amountEuros
@@ -128,6 +132,7 @@ public struct GeneratedCaptureDraft: Sendable, Equatable {
         self.payee = payee
         self.reportingDate = reportingDate
         self.categoryName = categoryName
+        self.accountName = accountName
         self.note = note
     }
 }
@@ -244,7 +249,7 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return EntryDraft(reportingDate: context.today)
+            return EntryDraft()
         }
 
         let generated: GeneratedCaptureDraft
@@ -395,9 +400,9 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
             amount = nil
         }
 
-        let kind: Kind = generated.kind == .income ? .income : .expense
+        let kind: Kind? = generated.kind.map { $0 == .income ? .income : .expense }
         let payee = trimmedNonEmpty(generated.payee)
-        let reportingDate = trimmedNonEmpty(generated.reportingDate).flatMap { ReportingDate(iso8601: $0) } ?? context.today
+        let reportingDate = trimmedNonEmpty(generated.reportingDate).flatMap { ReportingDate(iso8601: $0) }
 
         let mentionedCategory = trimmedNonEmpty(generated.categoryName).flatMap { name in
             context.categories.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
@@ -406,6 +411,9 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
             context.payees.first { $0.name.caseInsensitiveCompare(candidate) == .orderedSame }?.defaultCategory
         }
         let category = mentionedCategory ?? payeeDefault
+        let account = trimmedNonEmpty(generated.accountName).flatMap { name in
+            context.accounts.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        }
 
         return EntryDraft(
             amount: amount,
@@ -413,6 +421,7 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
             payee: payee,
             reportingDate: reportingDate,
             categoryID: category?.id,
+            accountID: account?.id,
             overridesCategory: mentionedCategory != nil,
             note: trimmedNonEmpty(generated.note)
         )
@@ -564,15 +573,22 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
 
     private static let captureInstructions = """
     You extract structured fields from a short expense or income sentence.
+    Leave unmentioned fields nil so the existing form's values stay unchanged.
     If no date is mentioned, leave reportingDate nil.
     Only set categoryName if a category from the provided list is explicitly mentioned.
+    Only set accountName if an account from the provided list is explicitly mentioned.
+    Keep the account phrase out of the payee name: '20 euros at Middle Eats with Revolut' means payee Middle Eats and account Revolut.
     """
 
     private static func capturePrompt(text: String, context: InterpretationContext) -> String {
         let categories = context.categories.map(\.name).sorted().joined(separator: ", ")
+        let accounts = context.accounts.map(\.name).sorted().joined(separator: ", ")
+        let payees = (context.payees.map(\.name) + context.aliasNames).sorted().joined(separator: ", ")
         return """
         Today: \(context.today.iso8601)
         Categories: \(categories.isEmpty ? "(none)" : categories)
+        Accounts: \(accounts.isEmpty ? "(none)" : accounts)
+        Payees and aliases: \(payees.isEmpty ? "(none)" : payees)
         Entry text: \(text)
         """
     }

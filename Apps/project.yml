@@ -51,6 +51,8 @@ targets:
       path: iOS/Info.plist
       properties:
         CenttrailCloudKitContainer: iCloud.com.tejaskale.centtrail
+        NSMicrophoneUsageDescription: Speak an entry to fill the form on this device. Nothing is saved until you tap Save.
+        NSSpeechRecognitionUsageDescription: Transcribe your spoken entry on this device so you can review the fields before saving.
         UIBackgroundModes: [remote-notification]
     entitlements:
       path: iOS/Centtrail.entitlements
@@ -76,6 +78,8 @@ targets:
       path: macOS/Info.plist
       properties:
         CenttrailCloudKitContainer: iCloud.com.tejaskale.centtrail
+        NSMicrophoneUsageDescription: Speak an entry to fill the form on this device. Nothing is saved until you tap Save.
+        NSSpeechRecognitionUsageDescription: Transcribe your spoken entry on this device so you can review the fields before saving.
     entitlements:
       path: macOS/Centtrail.entitlements
       properties:
@@ -83,6 +87,8 @@ targets:
         com.apple.security.app-sandbox: true
         # iCloud sync of the ledger through CloudKit.
         com.apple.security.network.client: true
+        com.apple.security.device.audio-input: true
+        com.apple.security.personal-information.speech-recognition: true
         com.apple.security.files.user-selected.read-only: true
         com.apple.developer.aps-environment: development
         com.apple.developer.icloud-services: [CloudKit]
