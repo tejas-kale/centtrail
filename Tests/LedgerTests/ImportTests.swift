@@ -32,7 +32,7 @@ import Testing
     #expect(try ledger.defaultCategory(forPayeeName: "ALDI Data and Analytics")?.name == "Salary")
     #expect(try ledger.defaultCategory(forPayeeName: "Middle Eats")?.name == "Restaurant")
     #expect(try ledger.defaultCategory(forPayeeName: "WinSIM")?.name == "Utilities")
-    let booking = try #require(try ledger.transactions().first { $0.payee.name == "Booking" })
+    let booking = try #require(try ledger.transactions().first { $0.payee!.name == "Booking" })
     #expect(booking.note == "For the stay on April 29-30")
     #expect(booking.reportingDate.iso8601 == "2025-02-16")
     #expect(preview[0].amountText == "4164.84")
@@ -100,7 +100,7 @@ import Testing
     do {
         let ledger = try Ledger.open(at: url)
         let amazon = try recordEntry(ledger, cents: 500, kind: .expense, payee: "Amazon", date: "2026-03-01", category: "Supermarket")
-        try ledger.confirmAlias("AMZN MKTP", of: amazon.payee.id)
+        try ledger.confirmAlias("AMZN MKTP", of: amazon.payee!.id)
         let preview = try ledger.previewImport(csv)
         #expect(preview[0].proposedDefaultCategoryName == "Restaurant")
         #expect(preview[0].amountText == "-10.00")
@@ -110,13 +110,13 @@ import Testing
         #expect(try ledger.defaultCategory(forPayeeName: "Cafe") == nil)
         #expect(try ledger.proposedPayeeDefaults().map(\.payee) == ["Cafe"])
         #expect(try ledger.proposedPayeeDefaults().map(\.categoryName) == ["Restaurant"])
-        let cafeEntries = try ledger.transactions().filter { $0.payee.name == "Cafe" }
-        #expect(cafeEntries.map(\.category.name).sorted() == ["Restaurant", "Supermarket"])
-        #expect(cafeEntries.first { $0.category.name == "Restaurant" }?.categoryProvenance == .inherited)
-        #expect(cafeEntries.first { $0.category.name == "Supermarket" }?.categoryProvenance == .overridden)
+        let cafeEntries = try ledger.transactions().filter { $0.payee!.name == "Cafe" }
+        #expect(cafeEntries.compactMap(\.category?.name).sorted() == ["Restaurant", "Supermarket"])
+        #expect(cafeEntries.first { $0.category!.name == "Restaurant" }?.categoryProvenance == .inherited)
+        #expect(cafeEntries.first { $0.category!.name == "Supermarket" }?.categoryProvenance == .overridden)
         let aliasEntry = try ledger.transactions().first { $0.reportingDate.iso8601 == "2026-04-03" }
-        #expect(aliasEntry?.payee.id == amazon.payee.id)
-        #expect(aliasEntry?.payee.defaultCategory?.name == "Supermarket")
+        #expect(aliasEntry?.payee!.id == amazon.payee!.id)
+        #expect(aliasEntry?.payee!.defaultCategory?.name == "Supermarket")
     }
     let reopened = try Ledger.open(at: url)
     #expect(try reopened.defaultCategory(forPayeeName: "Cafe") == nil)
@@ -128,9 +128,9 @@ import Testing
     #expect(try reopened.proposedPayeeDefaults().isEmpty)
     let hotel = try namedCategory(reopened, "Hotel")
     try reopened.setDefaultCategory(hotel.id, for: proposal.payeeID)
-    let afterChange = try reopened.transactions().filter { $0.payee.name == "Cafe" }
-    #expect(afterChange.first { $0.categoryProvenance == .inherited }?.category.name == "Hotel")
-    #expect(afterChange.first { $0.categoryProvenance == .overridden }?.category.name == "Supermarket")
+    let afterChange = try reopened.transactions().filter { $0.payee!.name == "Cafe" }
+    #expect(afterChange.first { $0.categoryProvenance == .inherited }?.category!.name == "Hotel")
+    #expect(afterChange.first { $0.categoryProvenance == .overridden }?.category!.name == "Supermarket")
 }
 
 @Test func acceptingAProposedDefaultDuringCommitAppliesIt() throws {

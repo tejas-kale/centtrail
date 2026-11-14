@@ -11,7 +11,9 @@ func recordEntry(_ ledger: Ledger, cents: Int, kind: Kind, payee: String, date: 
         kind: kind,
         payee: payee,
         reportingDate: ReportingDate(iso8601: date),
-        categoryID: try namedCategory(ledger, name).id
+        categoryID: kind == .transfer ? nil : try namedCategory(ledger, name).id,
+        accountID: try ledger.accounts()[0].id,
+        destinationAccountID: kind == .transfer ? try ledger.accounts()[3].id : nil
     ))
 }
 

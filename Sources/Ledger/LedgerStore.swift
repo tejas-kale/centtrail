@@ -2,6 +2,12 @@ import Foundation
 import GRDB
 import SQLiteData
 
+@Table("account")
+struct AccountRecord: Identifiable, Sendable {
+    let id: UUID
+    var name: String = ""
+}
+
 @Table("category")
 struct CategoryRecord: Identifiable, Sendable {
     let id: UUID
@@ -25,11 +31,15 @@ struct EntryRecord: Identifiable, Sendable {
     var amountCents: Int = 0
     var kind: String = "expense"
     @Column("counterparty_id")
-    var counterpartyID: UUID
+    var counterpartyID: UUID?
+    @Column("account_id")
+    var accountID: UUID?
+    @Column("destination_account_id")
+    var destinationAccountID: UUID?
     @Column("reporting_date")
     var reportingDate: String = ""
     @Column("category_id")
-    var categoryID: UUID
+    var categoryID: UUID?
     @Column("category_provenance")
     var categoryProvenance: String = "inherited"
     var note: String?
@@ -157,6 +167,47 @@ final class SQLiteConnection {
                 """
             )
         }
+        migrator.registerMigration("v2_accounts") { db in
+            try db.execute(sql: """
+                CREATE TABLE account (
+                    id TEXT PRIMARY KEY NOT NULL ON CONFLICT REPLACE DEFAULT (uuid()),
+                    name TEXT NOT NULL DEFAULT ''
+                ) STRICT;
+                CREATE TABLE ledger_initialization (key TEXT PRIMARY KEY NOT NULL) STRICT;
+                """)
+        }
+        migrator.registerMigration("v2_entry_accounts") { db in
+            try db.execute(sql: """
+                CREATE TABLE entry_accounts (
+                    id TEXT PRIMARY KEY NOT NULL ON CONFLICT REPLACE DEFAULT (uuid()),
+                    amount_cents INTEGER NOT NULL DEFAULT 0,
+                    kind TEXT NOT NULL DEFAULT 'expense',
+                    counterparty_id TEXT REFERENCES counterparty(id) ON DELETE SET NULL,
+                    reporting_date TEXT NOT NULL DEFAULT '',
+                    category_id TEXT REFERENCES category(id) ON DELETE SET NULL,
+                    category_provenance TEXT NOT NULL DEFAULT 'inherited',
+                    note TEXT,
+                    trashed_on TEXT,
+                    account_id TEXT REFERENCES account(id) ON DELETE RESTRICT,
+                    destination_account_id TEXT REFERENCES account(id) ON DELETE RESTRICT
+                ) STRICT;
+                INSERT INTO entry_accounts (id, amount_cents, kind, counterparty_id, reporting_date, category_id, category_provenance, note, trashed_on)
+                    SELECT id, amount_cents, kind, counterparty_id, reporting_date, category_id, category_provenance, note, trashed_on FROM entry;
+                """)
+            // Preserve import identities while rebuilding the transaction table.
+            try db.execute(sql: "CREATE TEMP TABLE saved_import_rows AS SELECT * FROM import_row")
+            try db.execute(sql: "DROP TABLE import_row; DROP TABLE entry; ALTER TABLE entry_accounts RENAME TO entry")
+            try db.execute(sql: """
+                CREATE TABLE import_row (
+                    id TEXT PRIMARY KEY NOT NULL ON CONFLICT REPLACE DEFAULT (uuid()),
+                    entry_id TEXT REFERENCES entry(id) ON DELETE SET NULL,
+                    source_timestamp TEXT NOT NULL DEFAULT '', amount_cents INTEGER NOT NULL DEFAULT 0,
+                    payee TEXT NOT NULL DEFAULT '', source_account TEXT NOT NULL DEFAULT ''
+                ) STRICT;
+                INSERT INTO import_row SELECT * FROM saved_import_rows;
+                DROP TABLE saved_import_rows;
+                """)
+        }
         try migrator.migrate(database)
 
         switch syncMode {
@@ -174,6 +225,7 @@ final class SQLiteConnection {
         try SyncEngine(
             for: database,
             tables: CategoryRecord.self,
+            AccountRecord.self,
             CounterpartyRecord.self,
             EntryRecord.self,
             CounterpartyAliasRecord.self,
@@ -282,7 +334,7 @@ public final class LedgerObservation {
 }
 
 extension SQLiteConnection {
-    static let ledgerTables = ["category", "counterparty", "entry", "counterparty_alias", "import_row", "proposed_payee_default"]
+    static let ledgerTables = ["account", "category", "counterparty", "entry", "counterparty_alias", "import_row", "proposed_payee_default"]
 
     func observeChanges(_ onChange: @escaping @Sendable () -> Void) -> LedgerObservation {
         let regions = Self.ledgerTables.map { GRDB.Table($0) as any DatabaseRegionConvertible }

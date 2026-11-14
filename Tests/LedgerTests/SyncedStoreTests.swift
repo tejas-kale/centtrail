@@ -56,10 +56,10 @@ import Testing
     )
     #expect(recorded.category == supermarket)
 
-    try ledger.setDefaultCategory(restaurant.id, for: recorded.payee.id)
+    try ledger.setDefaultCategory(restaurant.id, for: recorded.payee!.id)
     #expect(try ledger.transaction(id: recorded.id).category == restaurant)
 
-    try ledger.confirmAlias("REWE CITY", of: recorded.payee.id)
+    try ledger.confirmAlias("REWE CITY", of: recorded.payee!.id)
     let aliased = try recordEntry(
         ledger,
         cents: 900,
@@ -68,7 +68,7 @@ import Testing
         date: "2026-05-04",
         category: "Restaurant"
     )
-    #expect(aliased.payee.id == recorded.payee.id)
+    #expect(aliased.payee!.id == recorded.payee!.id)
 
     let today = try #require(ReportingDate(iso8601: "2026-05-10"))
     try ledger.trash(aliased.id, on: today)
@@ -81,12 +81,12 @@ import Testing
     let rewe = try recordEntry(ledger, cents: 1000, kind: .expense, payee: "REWE", date: "2026-05-01", category: "Supermarket")
     let edeka = try recordEntry(ledger, cents: 1200, kind: .expense, payee: "Edeka", date: "2026-05-02", category: "Supermarket")
 
-    try ledger.confirmAlias("REWE MARKT", of: rewe.payee.id)
+    try ledger.confirmAlias("REWE MARKT", of: rewe.payee!.id)
     // Idempotent for the same payee
-    try ledger.confirmAlias("REWE MARKT", of: rewe.payee.id)
+    try ledger.confirmAlias("REWE MARKT", of: rewe.payee!.id)
 
     #expect(throws: LedgerError.self) {
-        try ledger.confirmAlias("REWE MARKT", of: edeka.payee.id)
+        try ledger.confirmAlias("REWE MARKT", of: edeka.payee!.id)
     }
 }
 
@@ -115,9 +115,9 @@ import Testing
     let rewe = try recordEntry(ledger, cents: 1000, kind: .expense, payee: "REWE", date: "2026-05-01", category: "Supermarket")
     let reweCity = try recordEntry(ledger, cents: 500, kind: .expense, payee: "REWE City", date: "2026-05-02", category: "Supermarket")
 
-    try ledger.mergePayees(sourceID: reweCity.payee.id, into: rewe.payee.id)
-    #expect(try ledger.transactions().allSatisfy { $0.payee.id == rewe.payee.id })
-    #expect(try recordEntry(ledger, cents: 200, kind: .expense, payee: "REWE City", date: "2026-05-03", category: "Supermarket").payee.id == rewe.payee.id)
+    try ledger.mergePayees(sourceID: reweCity.payee!.id, into: rewe.payee!.id)
+    #expect(try ledger.transactions().allSatisfy { $0.payee!.id == rewe.payee!.id })
+    #expect(try recordEntry(ledger, cents: 200, kind: .expense, payee: "REWE City", date: "2026-05-03", category: "Supermarket").payee!.id == rewe.payee!.id)
 
     let pets = try ledger.addCategory(name: "Pets")
     let renamed = try ledger.renameCategory(id: pets.id, to: "Pet care")

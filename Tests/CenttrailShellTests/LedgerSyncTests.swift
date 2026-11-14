@@ -29,13 +29,14 @@ extension SystemEntryPointsTests {
             kind: .expense,
             payee: "REWE",
             reportingDate: today,
-            categoryID: supermarket.id
+            categoryID: supermarket.id,
+            accountID: try ledger.accounts()[0].id
         ))
 
         for _ in 0..<100 where model.transactions.isEmpty {
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(model.transactions.map(\.payee.name) == ["REWE"])
+        #expect(model.transactions.map(\.payee!.name) == ["REWE"])
         #expect(model.homeSummary?.currentSpendingCents == 1250)
     }
 }

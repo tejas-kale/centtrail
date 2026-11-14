@@ -234,5 +234,5 @@ private struct FakeLanguageModelBackend: LanguageModelBackend {
     }
     #expect(searchRange.start.iso8601 == "2026-04-01")
     #expect(searchRange.end.iso8601 == "2026-04-30")
-    #expect(txs.map(\.payee.name) == ["Middle Eats"])
+    #expect(txs.map(\.payee!.name) == ["Middle Eats"])
 }

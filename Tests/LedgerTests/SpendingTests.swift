@@ -32,7 +32,8 @@ private func record(
             kind: kind,
             payee: payee,
             reportingDate: reportingDate,
-            categoryID: categoryID
+            categoryID: categoryID,
+            accountID: try ledger.accounts()[0].id
         )
     )
 }

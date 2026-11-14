@@ -4,9 +4,9 @@ import Testing
 @Test func aConfirmedAliasResolvesToTheSamePayee() throws {
     let ledger = try Ledger.openInMemory()
     let amazon = try recordEntry(ledger, cents: 500, kind: .expense, payee: "Amazon", date: "2026-03-01", category: "Supermarket")
-    try ledger.confirmAlias("AMZN MKTP", of: amazon.payee.id)
+    try ledger.confirmAlias("AMZN MKTP", of: amazon.payee!.id)
     let again = try recordEntry(ledger, cents: 700, kind: .expense, payee: "AMZN MKTP", date: "2026-03-02", category: "Supermarket")
-    #expect(again.payee.id == amazon.payee.id)
+    #expect(again.payee!.id == amazon.payee!.id)
     #expect(try ledger.payees().map(\.name) == ["Amazon"])
 }
 
