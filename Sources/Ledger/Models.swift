@@ -29,7 +29,18 @@ public struct Cents: Hashable, Sendable {
             fraction = 0
         }
 
-        self.init(euros * 100 + fraction)
+        let (wholeCents, multiplyOverflow) = euros.multipliedReportingOverflow(by: 100)
+        let (cents, addOverflow) = wholeCents.addingReportingOverflow(fraction)
+        guard !multiplyOverflow, !addOverflow else { return nil }
+        self.init(cents)
+    }
+
+    /// Converts a model's euro value, rounding to the nearest cent. Invalid
+    /// or unrepresentable values require correction instead of trapping.
+    public init?(roundedEuros: Double) {
+        guard roundedEuros.isFinite, roundedEuros >= 0,
+              let cents = Int(exactly: (roundedEuros * 100).rounded()) else { return nil }
+        self.init(cents)
     }
 
     private static func digits(_ text: Substring) -> Int? {
@@ -41,9 +52,7 @@ public struct Cents: Hashable, Sendable {
 public enum Kind: String, Hashable, Sendable {
     case expense
     case income
-    case refund
     case transfer
-    case repayment
 }
 
 public enum CategoryProvenance: String, Hashable, Sendable {
@@ -141,7 +150,7 @@ public struct ReportingDate: Hashable, Sendable {
     }
 }
 
-public struct Counterparty: Hashable, Sendable, Identifiable {
+public struct Payee: Hashable, Sendable, Identifiable {
     public let id: ID
     public let name: String
     public let defaultCategory: Category?
@@ -165,12 +174,13 @@ public struct Transaction: Hashable, Sendable, Identifiable {
     public let id: ID
     public let amount: Cents
     public let kind: Kind
-    public let counterparty: Counterparty
+    public let payee: Payee?
     public let reportingDate: ReportingDate
-    public let category: Category
+    public let category: Category?
+    public let account: Account
+    public let destinationAccount: Account?
     public let categoryProvenance: CategoryProvenance
     public let note: String?
-    public let originalPurchaseID: ID?
 
     public struct ID: Hashable, Sendable {
         public let rawValue: UUID
@@ -184,31 +194,35 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         id: ID,
         amount: Cents,
         kind: Kind,
-        counterparty: Counterparty,
+        payee: Payee?,
         reportingDate: ReportingDate,
-        category: Category,
+        category: Category?,
+        account: Account,
+        destinationAccount: Account? = nil,
         categoryProvenance: CategoryProvenance = .inherited,
-        note: String? = nil,
-        originalPurchaseID: ID? = nil
+        note: String? = nil
     ) {
         self.id = id
         self.amount = amount
         self.kind = kind
-        self.counterparty = counterparty
+        self.payee = payee
         self.reportingDate = reportingDate
         self.category = category
+        self.account = account
+        self.destinationAccount = destinationAccount
         self.categoryProvenance = categoryProvenance
         self.note = note
-        self.originalPurchaseID = originalPurchaseID
     }
 }
 
 public enum EntryField: String, Hashable, Sendable {
     case amount
     case kind
-    case counterparty
+    case payee
     case reportingDate
     case category
+    case account
+    case destinationAccount
 }
 
 public struct SignedCents: Hashable, Sendable {
@@ -252,7 +266,7 @@ public struct ReportQuery: Hashable, Sendable {
     public var measure: Measure
     public var range: DateRange?
     public var categoryID: Category.ID?
-    public var counterpartyName: String?
+    public var payeeName: String?
     public var amount: AmountCondition?
     public var grouping: Grouping?
 
@@ -260,14 +274,14 @@ public struct ReportQuery: Hashable, Sendable {
         measure: Measure,
         range: DateRange? = nil,
         categoryID: Category.ID? = nil,
-        counterpartyName: String? = nil,
+        payeeName: String? = nil,
         amount: AmountCondition? = nil,
         grouping: Grouping? = nil
     ) {
         self.measure = measure
         self.range = range
         self.categoryID = categoryID
-        self.counterpartyName = counterpartyName
+        self.payeeName = payeeName
         self.amount = amount
         self.grouping = grouping
     }
@@ -278,7 +292,7 @@ public enum ReportOperation: Hashable, Sendable {
     case currentMonthIncome
     case total(ReportQuery)
     case breakdown(ReportQuery)
-    case comparison(measure: Measure, categoryID: Category.ID?, counterpartyName: String?)
+    case comparison(measure: Measure, categoryID: Category.ID?, payeeName: String?)
     case search(ReportQuery)
 }
 
@@ -340,37 +354,98 @@ public enum RecordEntryError: Error, Equatable {
     case incomplete(Set<EntryField>)
     case unknownCategory
     case unknownEntry
-    case linkedRefundNeedsPurchase
 }
 
 public struct EntryDraft: Equatable, Sendable {
     public var amount: Cents?
     public var kind: Kind?
-    public var counterparty: String?
+    public var payee: String?
     public var reportingDate: ReportingDate?
     public var categoryID: Category.ID?
+    public var accountID: Account.ID?
+    public var destinationAccountID: Account.ID?
 
     public init(
         amount: Cents? = nil,
         kind: Kind? = nil,
-        counterparty: String? = nil,
+        payee: String? = nil,
         reportingDate: ReportingDate? = nil,
         categoryID: Category.ID? = nil,
+        accountID: Account.ID? = nil,
+        destinationAccountID: Account.ID? = nil,
         overridesCategory: Bool = false,
-        note: String? = nil,
-        originalPurchaseID: Transaction.ID? = nil
+        note: String? = nil
     ) {
         self.amount = amount
         self.kind = kind
-        self.counterparty = counterparty
+        self.payee = payee
         self.reportingDate = reportingDate
         self.categoryID = categoryID
+        self.accountID = accountID
+        self.destinationAccountID = destinationAccountID
         self.overridesCategory = overridesCategory
         self.note = note
-        self.originalPurchaseID = originalPurchaseID
     }
 
     public var overridesCategory: Bool
     public var note: String?
-    public var originalPurchaseID: Transaction.ID?
+}
+
+/// Per-category spending comparison for the home summary.
+public struct CategorySummary: Hashable, Sendable, Identifiable {
+    public var id: Category.ID { category.id }
+    public let category: Category
+    public let currentCents: Int
+    public let previousSameDaysCents: Int
+    public let previousFullMonthCents: Int
+
+    public init(
+        category: Category,
+        currentCents: Int,
+        previousSameDaysCents: Int,
+        previousFullMonthCents: Int
+    ) {
+        self.category = category
+        self.currentCents = currentCents
+        self.previousSameDaysCents = previousSameDaysCents
+        self.previousFullMonthCents = previousFullMonthCents
+    }
+}
+
+/// Summary of this month's spending against the same elapsed days and full total of last month.
+public struct HomeSummary: Hashable, Sendable {
+    public let currentMonthRange: DateRange
+    public let previousSameDaysRange: DateRange
+    public let previousFullMonthRange: DateRange
+    public let currentSpendingCents: Int
+    public let previousSameDaysSpendingCents: Int
+    public let previousFullMonthSpendingCents: Int
+    public let changeCents: Int
+    public let percentageChange: Double?
+    public let unequalLengths: Bool
+    public let categories: [CategorySummary]
+
+    public init(
+        currentMonthRange: DateRange,
+        previousSameDaysRange: DateRange,
+        previousFullMonthRange: DateRange,
+        currentSpendingCents: Int,
+        previousSameDaysSpendingCents: Int,
+        previousFullMonthSpendingCents: Int,
+        changeCents: Int,
+        percentageChange: Double?,
+        unequalLengths: Bool,
+        categories: [CategorySummary]
+    ) {
+        self.currentMonthRange = currentMonthRange
+        self.previousSameDaysRange = previousSameDaysRange
+        self.previousFullMonthRange = previousFullMonthRange
+        self.currentSpendingCents = currentSpendingCents
+        self.previousSameDaysSpendingCents = previousSameDaysSpendingCents
+        self.previousFullMonthSpendingCents = previousFullMonthSpendingCents
+        self.changeCents = changeCents
+        self.percentageChange = percentageChange
+        self.unequalLengths = unequalLengths
+        self.categories = categories
+    }
 }

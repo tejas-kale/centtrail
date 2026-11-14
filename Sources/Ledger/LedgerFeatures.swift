@@ -8,7 +8,6 @@ SELECT
     entry.reporting_date,
     entry.category_provenance,
     entry.note,
-    entry.original_entry_id,
     entry.trashed_on,
     counterparty.id,
     counterparty.name,
@@ -17,11 +16,14 @@ SELECT
     default_category.counts_as_spending,
     entry_category.id,
     entry_category.name,
-    entry_category.counts_as_spending
+    entry_category.counts_as_spending,
+    account.id, account.name, destination.id, destination.name
 FROM entry
-JOIN counterparty ON counterparty.id = entry.counterparty_id
-JOIN category AS entry_category ON entry_category.id = entry.category_id
-LEFT JOIN category AS default_category ON default_category.id = counterparty.default_category_id
+LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
+LEFT JOIN effective_category AS entry_category ON entry_category.id = entry.category_id
+LEFT JOIN effective_category AS default_category ON default_category.id = counterparty.default_category_id
+JOIN effective_account AS account ON account.id = entry.account_id
+LEFT JOIN effective_account AS destination ON destination.id = entry.destination_account_id
 """
 
 extension Ledger {
@@ -29,30 +31,38 @@ extension Ledger {
         id: UUID,
         amount: Cents,
         kind: Kind,
-        counterpartyID: UUID,
+        payeeID: UUID?,
         reportingDate: ReportingDate,
-        categoryID: Category.ID,
+        categoryID: Category.ID?,
+        accountID: Account.ID,
+        destinationAccountID: Account.ID?,
         provenance: CategoryProvenance,
-        note: String?,
-        originalPurchaseID: UUID?
+        note: String?
     ) throws {
         try connection.execute(
             """
             INSERT INTO entry (
                 id, amount_cents, kind, counterparty_id, reporting_date, category_id,
-                category_provenance, note, original_entry_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                category_provenance, note, account_id, destination_account_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                amount_cents = excluded.amount_cents, kind = excluded.kind,
+                counterparty_id = excluded.counterparty_id, reporting_date = excluded.reporting_date,
+                category_id = excluded.category_id, category_provenance = excluded.category_provenance,
+                note = excluded.note, account_id = excluded.account_id,
+                destination_account_id = excluded.destination_account_id
             """,
             bindings: [
                 .text(stored(id)),
                 .integer(Int64(amount.value)),
                 .text(kind.rawValue),
-                .text(stored(counterpartyID)),
+                payeeID.map { .text(stored($0)) } ?? .null,
                 .text(reportingDate.iso8601),
-                .text(stored(categoryID.rawValue)),
+                categoryID.map { .text(stored($0.rawValue)) } ?? .null,
                 .text(provenance.rawValue),
                 note.map(SQLiteValue.text) ?? .null,
-                originalPurchaseID.map { .text(stored($0)) } ?? .null,
+                .text(stored(accountID.rawValue)),
+                destinationAccountID.map { .text(stored($0.rawValue)) } ?? .null,
             ]
         )
     }
@@ -71,49 +81,47 @@ extension Ledger {
     }
 
     func decodeTransaction(_ row: [SQLiteValue]) throws -> Transaction {
-        guard row.count == 16,
+        guard row.count == 19,
               let entryID = row[0].text.flatMap(UUID.init(uuidString:)),
               let cents = row[1].integer,
               let kind = row[2].text.flatMap(Kind.init(rawValue:)),
               let reportingDate = row[3].text.flatMap(ReportingDate.init(iso8601:)),
               let provenance = row[4].text.flatMap(CategoryProvenance.init(rawValue:)),
-              let counterpartyID = row[8].text.flatMap(UUID.init(uuidString:)),
-              let counterpartyName = row[9].text,
-              let categoryID = row[13].text.flatMap(UUID.init(uuidString:)),
-              let categoryName = row[14].text,
-              let categorySpending = row[15].integer
+              let accountID = row[15].text.flatMap(UUID.init(uuidString:)),
+              let accountName = row[16].text
         else {
             throw LedgerError(message: "The ledger returned an entry it could not read.")
         }
         let note = row[5].text
-        let original = row[6].text.flatMap(UUID.init(uuidString:)).map(Transaction.ID.init(rawValue:))
+        let payee: Payee?
+        if let id = row[7].text.flatMap(UUID.init(uuidString:)), let name = row[8].text {
+            payee = Payee(id: Payee.ID(rawValue: id), name: name,
+                defaultCategory: try category(idText: row[9].text, name: row[10].text, spending: row[11].integer))
+        } else { payee = nil }
+        let destination: Account?
+        if let id = row[17].text.flatMap(UUID.init(uuidString:)), let name = row[18].text {
+            destination = Account(id: Account.ID(rawValue: id), name: name)
+        } else { destination = nil }
         return Transaction(
             id: Transaction.ID(rawValue: entryID),
             amount: Cents(Int(cents)),
             kind: kind,
-            counterparty: Counterparty(
-                id: Counterparty.ID(rawValue: counterpartyID),
-                name: counterpartyName,
-                defaultCategory: try category(idText: row[10].text, name: row[11].text, spending: row[12].integer)
-            ),
+            payee: payee,
             reportingDate: reportingDate,
-            category: Category(
-                id: Category.ID(rawValue: categoryID),
-                name: categoryName,
-                countsAsSpending: categorySpending != 0
-            ),
+            category: try category(idText: row[12].text, name: row[13].text, spending: row[14].integer),
+            account: Account(id: Account.ID(rawValue: accountID), name: accountName),
+            destinationAccount: destination,
             categoryProvenance: provenance,
-            note: note,
-            originalPurchaseID: original
+            note: note
         )
     }
 
-    public func counterparties() throws -> [Counterparty] {
+    public func payees() throws -> [Payee] {
         let rows = try connection.query(
             """
             SELECT counterparty.id, counterparty.name, category.id, category.name, category.counts_as_spending
             FROM counterparty
-            LEFT JOIN category ON category.id = counterparty.default_category_id
+            LEFT JOIN effective_category AS category ON category.id = counterparty.default_category_id
             ORDER BY counterparty.name
             """
         )
@@ -122,25 +130,25 @@ extension Ledger {
                   let id = row[0].text.flatMap(UUID.init(uuidString:)),
                   let name = row[1].text
             else {
-                throw LedgerError(message: "The ledger returned a counterparty it could not read.")
+                throw LedgerError(message: "The ledger returned a payee it could not read.")
             }
-            return Counterparty(
-                id: Counterparty.ID(rawValue: id),
+            return Payee(
+                id: Payee.ID(rawValue: id),
                 name: name,
                 defaultCategory: try category(idText: row[2].text, name: row[3].text, spending: row[4].integer)
             )
         }
     }
 
-    public func defaultCategory(forCounterpartyName name: String) throws -> Category? {
+    public func defaultCategory(forPayeeName name: String) throws -> Category? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let id = try resolveCounterpartyID(named: trimmed) else { return nil }
-        return try requireCounterparty(id: id).defaultCategory
+        guard let id = try resolvePayeeID(named: trimmed) else { return nil }
+        return try requirePayee(id: id).defaultCategory
     }
 
-    func requireCounterparty(id: UUID) throws -> Counterparty {
-        guard let match = try counterparties().first(where: { $0.id.rawValue == id }) else {
-            throw LedgerError(message: "That counterparty is not in the ledger.")
+    func requirePayee(id: UUID) throws -> Payee {
+        guard let match = try payees().first(where: { $0.id.rawValue == id }) else {
+            throw LedgerError(message: "That payee is not in the ledger.")
         }
         return match
     }
@@ -153,13 +161,12 @@ extension Ledger {
         return Category(id: Category.ID(rawValue: id), name: name, countsAsSpending: spending != 0)
     }
 
-    public func setDefaultCategory(_ categoryID: Category.ID, for counterpartyID: Counterparty.ID) throws {
+    public func setDefaultCategory(_ categoryID: Category.ID, for payeeID: Payee.ID) throws {
         _ = try category(id: categoryID)
-        try connection.execute("BEGIN")
-        do {
+        try connection.inTransaction {
             try connection.execute(
                 "UPDATE counterparty SET default_category_id = ? WHERE id = ?",
-                bindings: [.text(stored(categoryID.rawValue)), .text(stored(counterpartyID.rawValue))]
+                bindings: [.text(stored(categoryID.rawValue)), .text(stored(payeeID.rawValue))]
             )
             try connection.execute(
                 """
@@ -167,28 +174,22 @@ extension Ledger {
                 SET category_id = ?
                 WHERE counterparty_id = ?
                   AND category_provenance = 'inherited'
-                  AND original_entry_id IS NULL
-                  AND kind != 'refund'
                 """,
-                bindings: [.text(stored(categoryID.rawValue)), .text(stored(counterpartyID.rawValue))]
+                bindings: [.text(stored(categoryID.rawValue)), .text(stored(payeeID.rawValue))]
             )
             try connection.execute(
                 "DELETE FROM proposed_payee_default WHERE counterparty_id = ?",
-                bindings: [.text(stored(counterpartyID.rawValue))]
+                bindings: [.text(stored(payeeID.rawValue))]
             )
-            try refreshLinkedRefundCategories()
-            try connection.execute("COMMIT")
-        } catch {
-            try? connection.execute("ROLLBACK")
-            throw error
         }
     }
 
     public func setCategory(_ categoryID: Category.ID, for entryID: Transaction.ID) throws {
         _ = try category(id: categoryID)
-        _ = try transaction(id: entryID)
-        try connection.execute("BEGIN")
-        do {
+        guard try transaction(id: entryID).kind != .transfer else {
+            throw LedgerError(message: "Transfers do not have a category.")
+        }
+        try connection.inTransaction {
             try connection.execute(
                 """
                 UPDATE entry
@@ -197,82 +198,99 @@ extension Ledger {
                 """,
                 bindings: [.text(stored(categoryID.rawValue)), .text(stored(entryID.rawValue))]
             )
-            try refreshLinkedRefundCategories()
-            try connection.execute("COMMIT")
-        } catch {
-            try? connection.execute("ROLLBACK")
-            throw error
         }
     }
 
-    public func confirmedAliases() throws -> [(name: String, counterpartyID: Counterparty.ID)] {
+    public func confirmedAliases() throws -> [(name: String, payeeID: Payee.ID)] {
         let rows = try connection.query("SELECT name, counterparty_id FROM counterparty_alias ORDER BY name")
         return rows.compactMap { row in
             guard let name = row[0].text, let id = row[1].text.flatMap(UUID.init(uuidString:)) else { return nil }
-            return (name, Counterparty.ID(rawValue: id))
+            return (name, Payee.ID(rawValue: id))
         }
     }
 
-    public func confirmAlias(_ name: String, of counterpartyID: Counterparty.ID) throws {
+    public func confirmAlias(_ name: String, of payeeID: Payee.ID) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw LedgerError(message: "An alias needs a name.")
         }
-        let target = try requireCounterparty(id: counterpartyID.rawValue)
+        let target = try requirePayee(id: payeeID.rawValue)
         if trimmed == target.name {
-            throw LedgerError(message: "An alias has to be a different name from the counterparty.")
+            throw LedgerError(message: "An alias has to be a different name from the payee.")
         }
         if let existingAlias = try connection.query(
             "SELECT counterparty_id FROM counterparty_alias WHERE name = ?",
             bindings: [.text(trimmed)]
         ).first?.first?.text, let owner = UUID(uuidString: existingAlias) {
-            if owner == counterpartyID.rawValue { return }
-            throw LedgerError(message: "That alias already belongs to another counterparty.")
+            if owner == payeeID.rawValue { return }
+            throw LedgerError(message: "That alias already belongs to another payee.")
         }
-        try connection.execute("BEGIN")
-        do {
-            if let other = try resolveCounterpartyID(named: trimmed), other != counterpartyID.rawValue {
-                try connection.execute(
-                    "UPDATE entry SET counterparty_id = ? WHERE counterparty_id = ?",
-                    bindings: [.text(stored(counterpartyID.rawValue)), .text(stored(other))]
-                )
-                try connection.execute(
-                    "UPDATE counterparty_alias SET counterparty_id = ? WHERE counterparty_id = ?",
-                    bindings: [.text(stored(counterpartyID.rawValue)), .text(stored(other))]
-                )
-                try connection.execute(
-                    "DELETE FROM counterparty WHERE id = ?",
-                    bindings: [.text(stored(other))]
-                )
+        try connection.inTransaction {
+            if let other = try resolvePayeeID(named: trimmed), other != payeeID.rawValue {
+                try reassignPayeeRecords(from: other, to: payeeID.rawValue)
             }
-            try connection.execute(
-                "INSERT INTO counterparty_alias (id, name, counterparty_id) VALUES (?, ?, ?)",
-                bindings: [
-                    .text(stored(UUID())),
-                    .text(trimmed),
-                    .text(stored(counterpartyID.rawValue)),
-                ]
-            )
-            try connection.execute("COMMIT")
-        } catch {
-            try? connection.execute("ROLLBACK")
-            throw error
+            try insertAliasIfAbsent(trimmed, for: payeeID.rawValue)
         }
     }
 
-    func refreshLinkedRefundCategories() throws {
-        try connection.execute(
-            """
-            UPDATE entry
-            SET category_id = (
-                SELECT purchase.category_id FROM entry AS purchase
-                WHERE purchase.id = entry.original_entry_id
+    /// Merges `sourceID` into `targetID`, moving all entries and aliases and
+    /// keeping the source payee's name as an alias of the surviving payee.
+    public func mergePayees(sourceID: Payee.ID, into targetID: Payee.ID) throws {
+        guard sourceID != targetID else {
+            throw LedgerError(message: "Choose two different payees to merge.")
+        }
+        let source = try requirePayee(id: sourceID.rawValue)
+        let target = try requirePayee(id: targetID.rawValue)
+        try connection.inTransaction {
+            try reassignPayeeRecords(from: source.id.rawValue, to: target.id.rawValue)
+            if source.name != target.name {
+                try insertAliasIfAbsent(source.name, for: target.id.rawValue)
+            }
+        }
+    }
+
+    private func reassignPayeeRecords(from sourceID: UUID, to targetID: UUID) throws {
+        let target = try requirePayee(id: targetID)
+        if let category = target.defaultCategory {
+            try connection.execute(
+                "UPDATE entry SET category_id = ? WHERE counterparty_id = ? AND category_provenance = 'inherited'",
+                bindings: [.text(stored(category.id.rawValue)), .text(stored(sourceID))]
             )
-            WHERE original_entry_id IS NOT NULL
-              AND EXISTS (
-                SELECT 1 FROM entry AS purchase WHERE purchase.id = entry.original_entry_id
-              )
-            """
+        } else {
+            // A payee awaiting import-default acceptance has no category to
+            // inherit. Keep the source classification as an explicit choice.
+            try connection.execute(
+                "UPDATE entry SET category_provenance = 'overridden' WHERE counterparty_id = ? AND category_provenance = 'inherited'",
+                bindings: [.text(stored(sourceID))]
+            )
+        }
+        try connection.execute(
+            "UPDATE entry SET counterparty_id = ? WHERE counterparty_id = ?",
+            bindings: [.text(stored(targetID)), .text(stored(sourceID))]
+        )
+        try connection.execute(
+            "UPDATE counterparty_alias SET counterparty_id = ? WHERE counterparty_id = ?",
+            bindings: [.text(stored(targetID)), .text(stored(sourceID))]
+        )
+        try connection.execute(
+            "DELETE FROM proposed_payee_default WHERE counterparty_id = ?",
+            bindings: [.text(stored(sourceID))]
+        )
+        try connection.execute(
+            "DELETE FROM counterparty WHERE id = ?",
+            bindings: [.text(stored(sourceID))]
+        )
+    }
+
+    private func insertAliasIfAbsent(_ name: String, for payeeID: UUID) throws {
+        let existing = try connection.query(
+            "SELECT counterparty_id FROM counterparty_alias WHERE name = ?",
+            bindings: [.text(name)]
+        )
+        guard existing.isEmpty else { return }
+        try connection.execute(
+            "INSERT INTO counterparty_alias (id, name, counterparty_id) VALUES (?, ?, ?)",
+            bindings: [.text(stored(UUID())), .text(name), .text(stored(payeeID))]
         )
     }
 
@@ -306,6 +324,7 @@ extension Ledger {
     }
 
     public func trashedEntries(today: ReportingDate) throws -> [TrashedEntry] {
+        try purgeExpiredTrash(today: today)
         let rows = try connection.query(
             """
             \(entrySelectSQL)
@@ -319,6 +338,81 @@ extension Ledger {
             let remaining = max(0, 30 - trashed.wholeDays(until: today))
             return TrashedEntry(transaction: transaction, daysRemaining: remaining)
         }
+    }
+
+
+    @discardableResult
+    public func addCategory(name: String, countsAsSpending: Bool = true) throws -> Category {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw LedgerError(message: "A category needs a name.")
+        }
+        let existing = try connection.query(
+            "SELECT id FROM effective_category WHERE is_removed = 0 AND lower(name) = lower(?)",
+            bindings: [.text(trimmed)]
+        )
+        if !existing.isEmpty {
+            throw LedgerError(message: "A category named \"\(trimmed)\" already exists.")
+        }
+        let id = Category.ID(rawValue: UUID())
+        try connection.execute(
+            "INSERT INTO category (id, name, counts_as_spending) VALUES (?, ?, ?)",
+            bindings: [
+                .text(stored(id.rawValue)),
+                .text(trimmed),
+                .integer(countsAsSpending ? 1 : 0),
+            ]
+        )
+        return Category(id: id, name: trimmed, countsAsSpending: countsAsSpending)
+    }
+
+    @discardableResult
+    public func renameCategory(id: Category.ID, to newName: String) throws -> Category {
+        let current = try category(id: id)
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw LedgerError(message: "A category needs a name.")
+        }
+        let duplicate = try connection.query(
+            "SELECT id FROM effective_category WHERE is_removed = 0 AND lower(name) = lower(?) AND id != ?",
+            bindings: [.text(trimmed), .text(stored(id.rawValue))]
+        )
+        if !duplicate.isEmpty {
+            throw LedgerError(message: "A category named \"\(trimmed)\" already exists.")
+        }
+        try renameReference(id.rawValue, to: trimmed)
+        return Category(id: id, name: trimmed, countsAsSpending: current.countsAsSpending)
+    }
+
+    public func removeCategory(id: Category.ID) throws {
+        let current = try category(id: id)
+        let entryRows = try connection.query(
+            "SELECT COUNT(*) FROM entry WHERE category_id = ?",
+            bindings: [.text(stored(id.rawValue))]
+        )
+        let entryCount = Int(entryRows.first?.first?.integer ?? 0)
+        if entryCount > 0 {
+            let noun = entryCount == 1 ? "transaction" : "transactions"
+            let verb = entryCount == 1 ? "uses" : "use"
+            throw LedgerError(
+                message: "Cannot remove \"\(current.name)\" because \(entryCount) \(noun) \(verb) it."
+            )
+        }
+        let payeeRows = try connection.query(
+            "SELECT COUNT(*) FROM counterparty WHERE default_category_id = ?",
+            bindings: [.text(stored(id.rawValue))]
+        )
+        let proposedRows = try connection.query(
+            "SELECT COUNT(*) FROM proposed_payee_default WHERE category_id = ?",
+            bindings: [.text(stored(id.rawValue))]
+        )
+        let payeeCount = Int(payeeRows.first?.first?.integer ?? 0) + Int(proposedRows.first?.first?.integer ?? 0)
+        if payeeCount > 0 {
+            throw LedgerError(
+                message: "Cannot remove \"\(current.name)\" because it is the default category for a payee."
+            )
+        }
+        try removeReference(id.rawValue)
     }
 
     private func trashedOn(_ id: Transaction.ID) throws -> ReportingDate? {

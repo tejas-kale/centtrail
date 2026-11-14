@@ -14,11 +14,14 @@ let package = Package(
         .library(name: "CenttrailShell", targets: ["CenttrailShell"]),
         .executable(name: "Centtrail", targets: ["CenttrailMac"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/pointfreeco/sqlite-data", from: "1.9.0"),
+    ],
     targets: [
         .target(
             name: "Ledger",
-            linkerSettings: [
-                .linkedLibrary("sqlite3"),
+            dependencies: [
+                .product(name: "SQLiteData", package: "sqlite-data"),
             ]
         ),
         .target(
@@ -35,7 +38,7 @@ let package = Package(
         ),
         .testTarget(
             name: "LedgerTests",
-            dependencies: ["Ledger", "Interpreter"],
+            dependencies: ["Ledger", "Interpreter", "CenttrailShell"],
             resources: [
                 .copy("Fixtures"),
             ],
@@ -43,6 +46,16 @@ let package = Package(
                 // Swift Build drops TestingMacros for this package unless the
                 // plugin is named on the test target. `swift test` needs it to
                 // expand @Test.
+                .unsafeFlags([
+                    "-load-plugin-library",
+                    "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib",
+                ]),
+            ]
+        ),
+        .testTarget(
+            name: "CenttrailShellTests",
+            dependencies: ["CenttrailShell", "Ledger"],
+            swiftSettings: [
                 .unsafeFlags([
                     "-load-plugin-library",
                     "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib",

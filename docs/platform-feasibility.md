@@ -40,6 +40,100 @@ The FAQ and FetchDescriptor content were returned as page extracts; the remainin
 
 These findings came from Kagi's indexed repository, source, and maintainer-discussion excerpts. No dependency has been installed and no sync prototype has been run.
 
+## SQLiteData + CloudKit evaluation (2026-11-14)
+
+- **Package & toolchain compatibility**: `pointfreeco/sqlite-data` supports Swift 6 (`Package@swift-6.0.swift` / `Package@swift-6.1.swift`) and declares support from iOS 17 / macOS 14, which is compatible with Centtrail's `.macOS("26.0")` and `.iOS("26.0")` package targets.
+- **Schema limits for `SyncEngine`**:
+  - **Globally unique primary keys**: Every synced table requires a globally unique primary key (`UUID` / `UUIDv7`, `TEXT PRIMARY KEY NOT NULL`).
+  - **No non-PK `UNIQUE` constraints**: `SyncEngine` inspects table pragmas and rejects any `UNIQUE` index/constraint on non-primary-key columns (*"Uniqueness constraints are not supported for synchronized tables."*). In Centtrail's current `Ledger` schema, `category.name`, `counterparty.name` (Payee), and `counterparty_alias.name` have `UNIQUE` constraints that must be dropped from synced DDL and handled at the application layer (e.g., deterministic UUIDs for seeded categories and merge/deduplication on lookup).
+  - **Foreign keys & `ON DELETE` actions**: Foreign keys are supported—`SyncEngine` topologically sorts batches and caches/retries child records that arrive before their parent—but `ON DELETE RESTRICT` and `ON DELETE NO ACTION` are rejected (*"Foreign key action not supported. Must be 'CASCADE', 'SET DEFAULT' or 'SET NULL'."*). Synced foreign keys (e.g., `entry.counterparty_id`, `entry.category_id`, `counterparty_alias.counterparty_id`, `proposed_payee_default`) must specify `ON DELETE CASCADE`, `ON DELETE SET NULL`, or `ON DELETE SET DEFAULT`.
+  - **Required fields & defaults**: Synced `NOT NULL` columns should carry safe `DEFAULT` values or be populated prior to insert so out-of-order or migrated records remain valid, and column names must avoid CloudKit-reserved metadata fields.
+- **Conflict resolution & domain sync behavior**:
+  - **Field-wise last-edit-wins (LWW)**: `SyncEngine` tracks per-column edit timestamps and merges concurrent edits column-by-column, preserving independent edits to different fields on the same row while resolving same-field conflicts to the latest edit without prompting.
+  - **Trash/restore**: Because `entry.trashed_on` is an independent column, trashing or restoring an entry syncs via field-wise LWW without clobbering unrelated fields.
+  - **Payee default + per-entry override**: Because `counterparty.default_category_id` and `entry.category_id` / `entry.category_provenance` live on separate tables/columns, changing a payee's default category on one device while setting a per-entry `override` on another device preserves both the new default (for inherited entries) and the explicit override.
+
+### Manual two-device verification checklist (iPhone Air & Mac)
+
+Live CloudKit sync requires signed app targets with iCloud/CloudKit entitlements, the Remote Notifications background mode, and two physical devices under the same iCloud account. None of these manual steps were executed in this CLI session; the owner should verify them on iPhone Air and Mac once ticket 04 wires `SyncEngine` into the app:
+
+- [ ] **Minimal schema sync**: Launch the signed build on both iPhone Air and Mac under the same iCloud account; create a category, payee, and entry on one device and confirm they appear on the other.
+- [ ] **Offline create, edit, and delete**: Put one device offline; create a new entry, edit an existing entry's amount or note, and delete another entry; reconnect and confirm all three changes appear on the other device.
+- [ ] **Same-field conflict (field-wise LWW)**: With both devices offline, edit the same field (e.g., `note` or `amount_cents`) on the same entry on both devices at different times; reconnect both and confirm the latest edit wins without prompting, while edits to different fields on the same entry are both preserved.
+- [ ] **Trash and restore**: Trash an entry on iPhone Air and confirm it leaves active lists/reports on Mac; restore it from Trash on Mac and confirm it returns on iPhone Air.
+- [ ] **Payee default + per-entry override**: Change a payee's default category on Mac while setting a per-entry category override on one of that payee's entries on iPhone Air; sync both and confirm inherited entries adopt the new default while the overridden entry keeps its override.
+
+### Ledger on the synced store (ticket 04): owner's two-device steps
+
+Ticket 04 moved the `Ledger` onto SQLiteData and wired `SyncEngine` into the app targets. The Ledger test suite runs against the new store (including with the sync engine attached, using SQLiteData's test CloudKit stand-in), but live CloudKit was not exercised: these steps are for the owner and have not been run.
+
+How sync is switched on:
+
+- `Apps/project.yml` gives both apps the iCloud (CloudKit) capability for container `iCloud.com.tejaskale.centtrail`, push (`aps-environment`), the iOS `remote-notification` background mode, and outgoing network access in the Mac sandbox.
+- Both apps carry the Info.plist key `CenttrailCloudKitContainer`. The shell opens the ledger with sync only when that key is present, so `swift run Centtrail` and the tests stay local.
+- Open screens refresh whenever the ledger changes, including changes pulled in from the other device.
+
+Before the first run:
+
+1. In the Apple Developer portal, create the CloudKit container `iCloud.com.tejaskale.centtrail` and enable iCloud (CloudKit) and Push Notifications on the `com.tejaskale.centtrail` App ID. Xcode's automatic signing can do this on the first signed build.
+2. `cd Apps && xcodegen generate`. On the first build, Xcode asks you to trust the SQLiteData macro packages (swift-structured-queries, swift-perception); trust them. Command-line builds need `-skipMacroValidation`. Then build and run the signed `CenttrailIOS` scheme on the iPhone Air and the `CenttrailMac` scheme on the Mac. Both must be signed into the same iCloud account with iCloud Drive on.
+3. Delete any 1.0 install first: v2 starts from an empty ledger and does not migrate 1.0 data.
+
+Checks:
+
+- [ ] **Fresh install**: On each device, the first launch shows an empty ledger. Settings → Categories lists the owner's 26 categories once, with no duplicates after both devices have synced.
+- [ ] **iPhone → Mac**: With both apps open, add an expense on the iPhone. Within about a minute it appears on the Mac's Home (last five, this month's total) without relaunching.
+- [ ] **Mac → iPhone**: Add an income on the Mac (Cmd-N). It appears on the iPhone's Home.
+- [ ] **Offline capture**: Turn on Airplane Mode on the iPhone. Add one transaction, edit another's category, and delete a third. All three work immediately offline. Turn Airplane Mode off; within a minute the Mac shows all three changes.
+- [ ] **Offline on the Mac**: Repeat the step above with Wi-Fi off on the Mac and check the iPhone.
+- [ ] **Last edit wins**: Put both devices offline, change the same transaction's category on each (iPhone first, then Mac), reconnect both. Both devices settle on the Mac's choice with no prompt.
+- [ ] **Trash and restore**: Delete a transaction on the iPhone; it disappears from the Mac's lists and totals. Restore it from Recently deleted on the Mac; it returns on the iPhone.
+- [ ] **Categories, payees and defaults**: Add a category on the Mac, change a payee's default category on the iPhone, and merge two payees on the Mac. Each change shows on the other device.
+- [ ] **CSV import**: Import the owner's CSV on one device. All transactions appear on the other device; the totals for one past month match on both.
+
+Seeded categories and accounts use stable IDs and immutable bootstrap defaults. A separate synced customization record stores user names and removal tombstones, so a later seed upload cannot overwrite those choices. Public Ledger tests verify names, removals, transaction labels and reports across repeated bootstrap/reopen; SyncEngine stand-in tests validate the overlay schema. Physical two-device convergence, including installing a second device after customization, remains unchecked.
+
+The v2 app opens `Centtrail/ledger-v2.sqlite`. It leaves the v1 `ledger.sqlite` untouched and starts clean for the owner's CSV re-import; it does not attempt to migrate a v1 schema.
+
+## Ask on Apple Foundation Models evaluation (2026-11-14)
+
+- **Runtime availability & fallback**: `AppleFoundationModelBackend` reads `SystemLanguageModel.default.availability` at runtime (`.available`, `.unavailable(.deviceNotEligible)`, `.unavailable(.appleIntelligenceNotEnabled)`, `.unavailable(.modelNotReady)`). When unavailable, `Interpreter` falls back to `KeywordLanguageModelBackend` and `AskScreen` displays a reason-specific note alongside the preset chips; when available, no unavailable note is shown.
+- **Guided generation & validation**: `AppleFoundationModelBackend` uses `LanguageModelSession` with `@Generable` (`GeneratedReportIntent` and `GeneratedCaptureDraft`). Every generated intent is validated before execution: inverted or incomplete date ranges, negative/invalid amounts, and unknown categories or payees become plain explanations (`.unsupported`), ambiguous names trigger `.clarification`, and mutation requests are refused.
+- **Evaluation set results (`Tests/LedgerTests/AskEvaluationTests.swift`)**:
+  - **12 representative questions** covering totals (spending/income, current/last month), breakdowns (`category`, `month`, `monthAndCategory`), comparisons, searches with amount filters, ambiguous payee clarification (`Amazon` vs `Amazon Fresh`), out-of-scope questions (`what is my net worth?`), and mutation refusals (`delete all my transactions`).
+  - **Keyword fallback (`KeywordLanguageModelBackend`)**: 12/12 operation accuracy, 12/12 argument accuracy.
+  - **Foundation Models schema + validator (`AppleFoundationModelBackend` with injected `@Generable` fixtures)**: 12/12 operation accuracy, 12/12 argument accuracy, plus verified rejection of invalid date ranges, negative amounts, and unknown categories.
+  - **Mac host observation, 2026-11-14**: The model was available during the integration baseline run. Live inference measured cold 2.5395 s and warm 1.4433 s on this Mac. The cold question (“how much did I spend this month?”) generated an invalid category (`Middle Eats`), which validation safely refused. These two observations are neither an accuracy benchmark nor iPhone timings and supersede the earlier unavailable-host observation.
+  - **Opt-in live evaluation**: Ordinary tests use injected fixtures and the keyword backend. Set `CENTTRAIL_LIVE_MODEL_EVALUATION=1` when explicitly running `appleFoundationModelLiveSmokeAndTimingWhenAvailable`; its stochastic results are diagnostic and device-specific.
+
+### Physical iPhone Air timing & accuracy checklist (5–7 second target)
+
+Physical iPhone Air timings (cold and warm end-to-end latency) and live on-device Apple Intelligence accuracy must be measured on device:
+
+- [ ] **Availability check on device**: With Apple Intelligence enabled on iPhone Air, open Ask and confirm the unavailable note is hidden (`unavailableNote == nil`). Toggle Apple Intelligence off in Settings and confirm the unavailable note appears with the expected reason and preset chips still work.
+- [ ] **Cold end-to-end timing (5–7 s target)**: Force-quit and relaunch Centtrail on iPhone Air; submit a representative Ask question (e.g. `"how much did I spend this month?"`) and record wall-clock time from send tap to rendered answer card. Target: `<= 5–7 s`.
+- [ ] **Warm end-to-end timing (5–7 s target)**: Immediately submit a second question in the same session (e.g. `"spent on restaurants compared with last month"`) and record wall-clock time from send tap to rendered answer card. Target: `<= 5–7 s`.
+- [ ] **Live evaluation set run**: Run `appleFoundationModelLiveSmokeAndTimingWhenAvailable` (and the 12-question evaluation set against `AppleFoundationModelBackend()`) on an Apple Intelligence-enabled device and record observed operation/argument accuracy and cold/warm timings here.
+
 ## Local validation boundary
 
-The current workspace runs on Linux, with neither `swift` nor `xcodebuild` on PATH (checked 2026-11-11). Apple framework, iCloud, and on-device model validation must run in an Apple development environment; none has been performed in this session. The owner selected SQLiteData as the first evaluation candidate, not as an already validated production dependency.
+The local `swift test` suite runs and passes on macOS in this workspace, but live CloudKit two-device sync, iPhone Foundation Models accuracy/latency, and signed device interactions remain unexecuted. The Mac-only live model observations above do not establish those acceptance criteria.
+
+
+## Voice capture (ticket 14, 2026-11-14)
+
+The + form has a mic/Stop action for expense and income. Recognition uses `SFSpeechRecognizer` only when `supportsOnDeviceRecognition` is true, and every request sets `requiresOnDeviceRecognition = true`. It refuses unsupported local languages instead of sending audio to a server. Apple's [on-device requirement](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition) is honored only on supported recognizers; speech authorization is still required [even for on-device requests](https://developer.apple.com/documentation/speech/asking-permission-to-use-speech-recognition).
+
+The app requests microphone and speech authorization on first mic use. Both app hosts supply usage explanations, and the Mac sandbox allows audio input and speech recognition. Denial or an unavailable recognizer leaves manual entry available with an actionable message. Closing the sheet stops audio and discards pending interpretation; Stop fills a draft for review and never records an entry.
+
+Deterministic `VoiceCaptureTests` verify fallback payee/account/category/date extraction, generated-model account mapping, preservation of unmentioned form fields and no writes during interpretation. These pass as part of the 82-test deterministic package suite before merging the later chip/import tickets. No live microphone or physical-device check was executed in this CLI session.
+
+Manual checks still to run on iPhone Air and Mac:
+
+- [ ] Tap the mic for the first time: the microphone and speech reasons are clear; allow each and confirm the listening state.
+- [ ] Say “20 euros at Middle Eats with Revolut”, then Stop. Check amount, payee, category and account; change fields if necessary. No ledger row appears until Save.
+- [ ] Select a different kind/date/account, then dictate only an amount. Unmentioned selections remain unchanged.
+- [ ] With Apple Intelligence off, say the same payee/amount sentence with “yesterday”. The keyword parser fills the fields and preserves the account when it is not mentioned.
+- [ ] Deny microphone or speech permission and confirm the message explains how to re-enable access; manual Save still works.
+- [ ] Dismiss the sheet while listening and while the model is filling fields. Recording stops and a later sheet opens with a clean draft.
+- [ ] Test an unsupported local dictation language and confirm no remote fallback occurs.

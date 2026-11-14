@@ -1,286 +1,694 @@
-import Interpreter
+import Charts
 import Ledger
 import SwiftUI
 
-struct TransactionDetail: View {
-    let transaction: LedgerTransaction
-    let ledger: Ledger
-
-    var body: some View {
-        Form {
-            LabeledContent("Amount", value: signedEuro(transaction.amount.value))
-            LabeledContent("Kind", value: transaction.kind.rawValue.capitalized)
-            LabeledContent("Counterparty", value: transaction.counterparty.name)
-            LabeledContent("Category", value: transaction.category.name)
-            LabeledContent("Provenance", value: transaction.categoryProvenance.rawValue.capitalized)
-            LabeledContent("Reporting date", value: transaction.reportingDate.iso8601)
-            if let note = transaction.note, !note.isEmpty {
-                LabeledContent("Note", value: note)
-            }
-            if let purchase = originalPurchase {
-                Section("Original purchase") {
-                    NavigationLink {
-                        TransactionDetail(transaction: purchase, ledger: ledger)
-                    } label: {
-                        Text("\(purchase.counterparty.name) · \(signedEuro(purchase.amount.value)) · \(purchase.reportingDate.iso8601)")
-                    }
-                }
-            }
-            if !linkedRefunds.isEmpty {
-                Section("Refunds") {
-                    ForEach(linkedRefunds) { refund in
-                        NavigationLink {
-                            TransactionDetail(transaction: refund, ledger: ledger)
-                        } label: {
-                            Text("\(signedEuro(refund.amount.value)) · \(refund.reportingDate.iso8601)")
-                        }
-                    }
-                }
-            }
-        }
-        .navigationTitle(transaction.counterparty.name)
-    }
-
-    private var originalPurchase: LedgerTransaction? {
-        guard let id = transaction.originalPurchaseID else { return nil }
-        return try? ledger.transaction(id: id)
-    }
-
-    private var linkedRefunds: [LedgerTransaction] {
-        (try? ledger.linkedRefunds(for: transaction.id)) ?? []
-    }
-}
-
-struct ReportsScreen: View {
+struct HomeScreen: View {
     @ObservedObject var model: CaptureModel
-    @State private var rows: [BreakdownRow] = []
-    @State private var rangeLabel = ""
-    @State private var comparison: LedgerComparison?
-    @State private var showsTable = false
-    @State private var question = ""
-    @State private var answer = ""
-    @State private var searchName = ""
-    @State private var searchAmount = ""
-    @State private var searchCategoryID: LedgerCategoryID?
-    @State private var searchFrom = ""
-    @State private var searchTo = ""
-    @State private var searchNotice = ""
-    @State private var matches: [LedgerTransaction] = []
+
+    private var recentTransactions: [LedgerTransaction] {
+        Array(model.transactions.prefix(5))
+    }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Ask") {
-                    Text("Apple Intelligence is unavailable. Preset reports below still work.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    TextField("restaurants this month vs last month", text: $question)
-                    Button("Ask", action: ask)
-                    if !answer.isEmpty {
-                        Text(answer)
-                    }
-                }
-                Section("Presets") {
-                    Button("This month") { showMonth() }
-                    Button("By category") { showBreakdown(grouping: .category, categoryID: nil) }
-                    Button("Utilities over months") { showUtilities() }
-                    Button("This month versus last month") { showComparison() }
-                    Toggle("Table", isOn: $showsTable)
-                }
-                if let comparison {
-                    Section("Comparison") {
-                        Text(rangeLabel)
-                        LabeledContent("Change", value: signedEuro(comparison.absoluteChangeCents))
-                        if comparison.unequalLengths {
-                            Text("The months have different lengths.")
-                        }
-                        if let percentage = comparison.percentageChange {
-                            LabeledContent("Percentage", value: String(format: "%.1f%%", percentage))
+            List {
+                if let errorMessage = model.errorMessage {
+                    Section {
+                        HStack {
+                            Text(errorMessage)
+                                .foregroundStyle(.red)
+                            Spacer()
+                            Button("Dismiss") {
+                                model.errorMessage = nil
+                            }
+                            .buttonStyle(.borderless)
                         }
                     }
                 }
-                Section("Result") {
-                    Text(rangeLabel).font(.footnote)
-                    if showsTable {
-                        ForEach(rows) { row in
-                            LabeledContent(rowLabel(row), value: signedEuro(row.cents))
+
+                if let summary = model.homeSummary {
+                    if summary.currentSpendingCents == 0 && summary.categories.isEmpty {
+                        Section {
+                            ContentUnavailableView {
+                                Label("No spending this month", systemImage: "eurosign.circle")
+                            } description: {
+                                Text("Add an expense to compare \(monthTitle(model.today)) with \(monthName(summary.previousFullMonthRange.start)).")
+                            } actions: {
+                                Button("Add transaction") {
+                                    model.openAddSheet()
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
                         }
                     } else {
-                        ForEach(rows) { row in
-                            let width = barWidth(row)
-                            HStack {
-                                Text(rowLabel(row)).frame(width: 120, alignment: .leading)
-                                RoundedRectangle(cornerRadius: 3)
-                                    .frame(width: width, height: 14)
-                                Text(signedEuro(row.cents)).font(.caption)
+                        Section {
+                            HomeSummaryCard(summary: summary, today: model.today)
+                        }
+
+                        if !summary.categories.isEmpty {
+                            Section("Categories") {
+                                HomeCategoryComparisonChart(categories: summary.categories)
+                                ForEach(summary.categories) { item in
+                                    HomeCategoryComparisonRow(item: item)
+                                }
                             }
                         }
                     }
                 }
-                Section("Search") {
-                    TextField("Vendor", text: $searchName)
-                    TextField("Over euros", text: $searchAmount)
-                    Picker("Category", selection: $searchCategoryID) {
-                        Text("Any").tag(Optional<LedgerCategoryID>.none)
-                        ForEach(model.categories) { category in
-                            Text(category.name).tag(Optional(category.id))
-                        }
-                    }
-                    TextField("From", text: $searchFrom, prompt: Text("YYYY-MM-DD"))
-                    TextField("To", text: $searchTo, prompt: Text("YYYY-MM-DD"))
-                    Button("Search", action: search)
-                    if !searchNotice.isEmpty {
-                        Text(searchNotice)
-                            .font(.footnote)
+
+                Section("Recent transactions") {
+                    if recentTransactions.isEmpty {
+                        Text("No transactions yet")
                             .foregroundStyle(.secondary)
-                    }
-                    ForEach(matches) { transaction in
-                        NavigationLink {
-                            TransactionDetail(transaction: transaction, ledger: model.ledger)
-                        } label: {
-                            TransactionRow(transaction: transaction)
+                    } else {
+                        ForEach(recentTransactions) { transaction in
+                            NavigationLink {
+                                TransactionDetail(model: model, transaction: transaction)
+                            } label: {
+                                TransactionRow(transaction: transaction)
+                            }
+                            .swipeActions {
+                                Button("Trash", role: .destructive) {
+                                    model.trash(transaction)
+                                }
+                            }
+                        }
+                        NavigationLink("See all") {
+                            AllTransactionsScreen(model: model)
                         }
                     }
                 }
             }
-            .navigationTitle("Reports")
+            .navigationTitle("Home")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        model.openAddSheet()
+                    } label: {
+                        Label("Add transaction", systemImage: "plus")
+                    }
+                }
+            }
         }
-    }
-
-    private func ask() {
-        let interpreter = Interpreter(ledger: model.ledger, today: model.today, modelUnavailableReason: .modelNotReady)
-        guard let interpretation = try? interpreter.interpretReport(question) else { return }
-        switch interpretation {
-        case .clarification(let names):
-            answer = "Which one: \(names.joined(separator: ", "))?"
-        case .unsupported(let explanation):
-            answer = explanation
-        case .operation(let operation):
-            guard let result = try? model.ledger.runReport(operation, today: model.today) else { return }
-            present(result)
-        }
-    }
-
-    private func showMonth() {
-        comparison = nil
-        guard let result = try? model.ledger.runReport(.total(ReportQuery(measure: .spending)), today: model.today) else { return }
-        present(result)
-    }
-
-    private func showUtilities() {
-        comparison = nil
-        let utilities = model.categories.first { $0.name == "Utilities" }
-        showBreakdown(grouping: .month, categoryID: utilities?.id)
-    }
-
-    private func showBreakdown(grouping: Grouping, categoryID: LedgerCategoryID?) {
-        comparison = nil
-        let query = ReportQuery(measure: .spending, categoryID: categoryID, grouping: grouping)
-        guard let result = try? model.ledger.runReport(.breakdown(query), today: model.today) else { return }
-        present(result)
-    }
-
-    private func showComparison() {
-        guard let result = try? model.ledger.runReport(.comparison(measure: .spending, categoryID: nil, counterpartyName: nil), today: model.today) else { return }
-        present(result)
-    }
-
-    private func search() {
-        var amount: AmountCondition?
-        if let euros = Int(searchAmount) { amount = .greaterThan(Cents(euros * 100)) }
-        let range: DateRange?
-        switch dateRange() {
-        case .absent:
-            range = nil
-        case .ready(let value):
-            range = value
-        case .invalid:
-            searchNotice = "Enter both dates as YYYY-MM-DD."
-            matches = []
-            return
-        }
-        searchNotice = ""
-        let query = ReportQuery(
-            measure: .spending,
-            range: range,
-            categoryID: searchCategoryID,
-            counterpartyName: searchName.isEmpty ? nil : searchName,
-            amount: amount
-        )
-        guard case .transactions(let found)? = try? model.ledger.runReport(.search(query), today: model.today) else { return }
-        matches = found
-    }
-
-    private enum DateRangeInput {
-        case absent
-        case ready(DateRange)
-        case invalid
-    }
-
-    private func dateRange() -> DateRangeInput {
-        let fromText = searchFrom.trimmingCharacters(in: .whitespacesAndNewlines)
-        let toText = searchTo.trimmingCharacters(in: .whitespacesAndNewlines)
-        if fromText.isEmpty && toText.isEmpty { return .absent }
-        guard let start = ReportingDate(iso8601: fromText), let end = ReportingDate(iso8601: toText) else {
-            return .invalid
-        }
-        return .ready(DateRange(start: start, end: end))
-    }
-
-    private func present(_ result: ReportResult) {
-        switch result {
-        case .spendingTotal(let cents), .incomeTotal(let cents):
-            rows = [BreakdownRow(month: nil, categoryName: "Total", cents: cents.value)]
-            rangeLabel = monthTitle(model.today)
-            comparison = nil
-            answer = signedEuro(cents.value)
-        case .total(let cents, let range):
-            rows = [BreakdownRow(month: nil, categoryName: "Total", cents: cents)]
-            rangeLabel = "\(range.start.iso8601) – \(range.end.iso8601)"
-            comparison = nil
-            answer = "\(signedEuro(cents)) (\(rangeLabel))"
-        case .breakdown(let breakdown, let range):
-            rows = breakdown
-            rangeLabel = "\(range.start.iso8601) – \(range.end.iso8601)"
-            comparison = nil
-            answer = rangeLabel
-        case .comparison(let value):
-            comparison = value
-            rows = [
-                BreakdownRow(month: value.earlier.range.start.iso8601, categoryName: nil, cents: value.earlier.cents),
-                BreakdownRow(month: value.later.range.start.iso8601, categoryName: nil, cents: value.later.cents),
-            ]
-            rangeLabel = "\(value.earlier.range.start.iso8601)–\(value.earlier.range.end.iso8601) versus \(value.later.range.start.iso8601)–\(value.later.range.end.iso8601)"
-            answer = "\(rangeLabel). Change \(signedEuro(value.absoluteChangeCents))."
-        case .transactions(let transactions):
-            matches = transactions
-            answer = "\(transactions.count) transactions"
-        }
-    }
-
-    private func rowLabel(_ row: BreakdownRow) -> String {
-        [row.month, row.categoryName].compactMap { $0 }.joined(separator: " ")
-    }
-
-    private func barWidth(_ row: BreakdownRow) -> CGFloat {
-        let peak = rows.map { abs($0.cents) }.max() ?? 1
-        guard peak > 0 else { return 0 }
-        return CGFloat(abs(row.cents)) / CGFloat(peak) * 140
     }
 }
 
-struct PeopleScreen: View {
+private struct HomeSummaryCard: View {
+    let summary: HomeSummary
+    let today: ReportingDate
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(monthTitle(today))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Text(formatEuro(summary.currentSpendingCents))
+                .font(.largeTitle.bold())
+                .monospacedDigit()
+
+            HStack(spacing: 6) {
+                Text("\(shortRangeLabel(summary.currentMonthRange)) vs \(shortRangeLabel(summary.previousSameDaysRange))")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(formatSignedEuro(summary.changeCents))
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+                if let percentage = summary.percentageChange {
+                    Text("(\(formatPercentageChange(percentage)))")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .font(.subheadline)
+
+            Text("\(monthName(summary.previousFullMonthRange.start)) total: \(formatEuro(summary.previousFullMonthSpendingCents))")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            if summary.unequalLengths {
+                Text("Unequal month lengths: \(summary.currentMonthRange.end.day) days vs \(summary.previousSameDaysRange.end.day) days")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct HomeCategoryComparisonChart: View {
+    let categories: [CategorySummary]
+
+    private struct BarEntry: Identifiable {
+        let id: String
+        let categoryName: String
+        let period: String
+        let euros: Double
+    }
+
+    private var bars: [BarEntry] {
+        categories.flatMap { item in
+            [
+                BarEntry(
+                    id: "\(item.id.rawValue)-current",
+                    categoryName: item.category.name,
+                    period: "This month",
+                    euros: Double(item.currentCents) / 100.0
+                ),
+                BarEntry(
+                    id: "\(item.id.rawValue)-previous",
+                    categoryName: item.category.name,
+                    period: "Last month",
+                    euros: Double(item.previousSameDaysCents) / 100.0
+                ),
+            ]
+        }
+    }
+
+    var body: some View {
+        Chart(bars) { bar in
+            BarMark(
+                x: .value("Spending", bar.euros),
+                y: .value("Category", bar.categoryName)
+            )
+            .position(by: .value("Period", bar.period))
+            .foregroundStyle(by: .value("Period", bar.period))
+            .cornerRadius(4)
+        }
+        .chartForegroundStyleScale([
+            "This month": Color.accentColor,
+            "Last month": Color.secondary.opacity(0.45),
+        ])
+        .chartLegend(position: .top, alignment: .leading)
+        .chartXAxis {
+            AxisMarks(position: .bottom) { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    if let euros = value.as(Double.self) {
+                        Text(euros.formatted(.currency(code: "EUR").precision(.fractionLength(0))))
+                    }
+                }
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading)
+        }
+        .frame(height: CGFloat(max(categories.count, 1)) * 46 + 28)
+        .padding(.vertical, 4)
+    }
+}
+
+private struct HomeCategoryComparisonRow: View {
+    let item: CategorySummary
+
+    var body: some View {
+        HStack {
+            Text(item.category.name)
+                .lineLimit(1)
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(formatEuro(item.currentCents))
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+                Text("Last month: \(formatEuro(item.previousSameDaysCents))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        }
+    }
+}
+
+struct AllTransactionsScreen: View {
     @ObservedObject var model: CaptureModel
-    @State private var people: [Counterparty] = []
-    @State private var aliasName = ""
-    @State private var aliasTarget: Counterparty.ID?
+    @State private var searchText = ""
+
+    private var filteredTransactions: [LedgerTransaction] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.transactions }
+        return model.transactions.filter { tx in
+            (tx.payee?.name.localizedCaseInsensitiveContains(query) ?? false)
+                || (tx.category?.name.localizedCaseInsensitiveContains(query) ?? false)
+                || (tx.note?.localizedCaseInsensitiveContains(query) ?? false)
+                || formatEuro(tx.amount.value).localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        List {
+            if let errorMessage = model.errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            if filteredTransactions.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+            } else {
+                ForEach(filteredTransactions) { transaction in
+                    NavigationLink {
+                        TransactionDetail(model: model, transaction: transaction)
+                    } label: {
+                        TransactionRow(transaction: transaction)
+                    }
+                    .swipeActions {
+                        Button("Trash", role: .destructive) {
+                            model.trash(transaction)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("All transactions")
+        .searchable(text: $searchText, prompt: "Search payee, category, or note")
+    }
+}
+
+struct AddEntrySheet: View {
+    @ObservedObject var model: CaptureModel
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var isAmountFocused: Bool
+    @StateObject private var voice = VoiceCapture()
+
+    private var missingFieldMessage: String? {
+        guard Cents(euroText: model.amountText) != nil else { return "Enter an amount." }
+        guard model.accountID != nil else { return "Choose an account." }
+        if model.kind == .transfer {
+            guard let destination = model.destinationAccountID else { return "Choose a destination account." }
+            guard destination != model.accountID else { return "Choose two different accounts." }
+        } else {
+            guard !model.payee.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Enter a payee." }
+            guard model.categoryID != nil else { return "Choose a category." }
+        }
+        return nil
+    }
+
+    private var payeeSuggestions: [Payee] {
+        let query = model.payee.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        return Array(
+            model.payees
+                .filter {
+                    $0.name.localizedCaseInsensitiveContains(query)
+                        && $0.name != query
+                }
+                .prefix(5)
+        )
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Counterparties") {
-                    ForEach(people) { person in
-                        Picker(person.name, selection: binding(for: person)) {
+                Section {
+                    Button {
+                        if voice.isRecording {
+                            voice.finish()
+                        } else {
+                            Task {
+                                await voice.start(contextualStrings: Array((model.payees.map(\.name) + model.accounts.map(\.name)).prefix(100)))
+                            }
+                        }
+                    } label: {
+                        Label(voice.isRecording ? "Stop listening" : "Fill from speech", systemImage: voice.isRecording ? "stop.circle.fill" : "mic")
+                    }
+                    .disabled(voice.isPreparing || model.isInterpretingSpeech || model.kind == .transfer)
+                    .accessibilityHint("Fills the form from on-device speech. Review the fields and tap Save to record the transaction.")
+                    if voice.isPreparing {
+                        ProgressView("Preparing microphone")
+                    } else if voice.isRecording {
+                        Text("Listening… Tap Stop when you're finished.")
+                            .foregroundStyle(.secondary)
+                    } else if model.isInterpretingSpeech {
+                        ProgressView("Filling the form")
+                    }
+                    if !voice.transcript.isEmpty {
+                        Text(voice.transcript)
+                        Text("Review the fields, then tap Save.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Section {
+                    Picker("Kind", selection: $model.kind) {
+                        Text("Expense").tag(Kind.expense)
+                        Text("Income").tag(Kind.income)
+                        Text("Transfer").tag(Kind.transfer)
+                    }
+                    .pickerStyle(.segmented)
+
+                    TextField("Amount", text: $model.amountText, prompt: Text("0.00"))
+                        .focused($isAmountFocused)
+                        #if os(iOS)
+                        .keyboardType(.decimalPad)
+                        #endif
+                }
+
+                if model.kind != .transfer {
+                    if !model.frequentPayees.isEmpty {
+                        Section("Frequent payees") {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack {
+                                    ForEach(model.frequentPayees) { suggestion in
+                                        Button(suggestion.payee.name) {
+                                            model.selectFrequentPayee(suggestion)
+                                            isAmountFocused = true
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .buttonBorderShape(.capsule)
+                                        .accessibilityHint("Fills payee, category and account")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Section {
+                        TextField("Payee", text: $model.payee, prompt: Text("Who was paid"))
+                            .onChange(of: model.payee) { _, _ in
+                                model.prefillCategory()
+                            }
+
+                        if !payeeSuggestions.isEmpty {
+                            ForEach(payeeSuggestions) { suggestion in
+                                Button {
+                                    model.selectSuggestedPayee(suggestion.name)
+                                } label: {
+                                    HStack {
+                                        Text(suggestion.name)
+                                        Spacer()
+                                        if let defaultCategory = suggestion.defaultCategory {
+                                            Text(defaultCategory.name)
+                                                .font(.footnote)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        Picker("Category", selection: Binding(get: { model.categoryID }, set: { model.categoryID = $0; model.noteManualCategory() })) {
+                            Text("Select").tag(Optional<LedgerCategoryID>.none)
+                            ForEach(model.categories) { category in
+                                Text(category.name).tag(Optional(category.id))
+                            }
+                        }
+
+                    }
+                }
+                Section {
+                    Picker(model.kind == .transfer ? "From account" : "Account", selection: $model.accountID) {
+                        Text("Select").tag(Optional<Account.ID>.none)
+                        ForEach(model.accounts) { account in Text(account.name).tag(Optional(account.id)) }
+                    }
+                    if model.kind == .transfer {
+                        Picker("To account", selection: $model.destinationAccountID) {
+                            Text("Select").tag(Optional<Account.ID>.none)
+                            ForEach(model.accounts.filter { $0.id != model.accountID }) { account in Text(account.name).tag(Optional(account.id)) }
+                        }
+                    }
+                    DatePicker("Date", selection: $model.selectedDate, displayedComponents: .date)
+                    if model.editingEntryID != nil { TextField("Note", text: $model.draftNote) }
+                }
+
+                if let message = model.draftMessage ?? missingFieldMessage {
+                    Section {
+                        Text(message)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .disabled(model.isInterpretingSpeech)
+            .navigationTitle(model.editingEntryID == nil ? "New transaction" : "Edit transaction")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        if model.save() {
+                            dismiss()
+                        }
+                    }
+                    .disabled(missingFieldMessage != nil || voice.isRecording || voice.isPreparing || model.isInterpretingSpeech)
+                }
+            }
+            .onAppear {
+                isAmountFocused = true
+            }
+            .onChange(of: voice.completedTranscript) { _, text in
+                guard let text else { return }
+                Task { await model.interpretSpeech(text) }
+            }
+            .onChange(of: voice.errorMessage) { _, message in
+                if let message { model.draftMessage = message }
+            }
+            .onChange(of: model.kind) { _, kind in
+                if kind == .transfer { voice.cancel() }
+            }
+            .onDisappear {
+                voice.cancel()
+                model.cancelSpeechInterpretation()
+            }
+        }
+    }
+}
+
+struct TransactionDetail: View {
+    @ObservedObject var model: CaptureModel
+    let originalTransaction: LedgerTransaction
+    @Environment(\.dismiss) private var dismiss
+
+    init(model: CaptureModel, transaction: LedgerTransaction) {
+        self.model = model
+        self.originalTransaction = transaction
+    }
+
+    private var transaction: LedgerTransaction {
+        model.transactions.first { $0.id == originalTransaction.id } ?? originalTransaction
+    }
+
+    var body: some View {
+        Form {
+            if let errorMessage = model.errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Section {
+                LabeledContent("Amount") {
+                    Text(formatEuro(transaction.amount.value))
+                        .foregroundStyle(transaction.kind == .income ? .green : .primary)
+                        .monospacedDigit()
+                }
+                LabeledContent("Kind", value: transaction.kind.rawValue.capitalized)
+                if let payee = transaction.payee { LabeledContent("Payee", value: payee.name) }
+                LabeledContent("Account", value: transaction.account.name)
+                if let destination = transaction.destinationAccount { LabeledContent("To account", value: destination.name) }
+                if let category = transaction.category { LabeledContent("Category", value: category.name) }
+                LabeledContent("Reporting date", value: transaction.reportingDate.iso8601)
+                if let note = transaction.note, !note.isEmpty {
+                    LabeledContent("Note", value: note)
+                }
+            }
+
+            Section {
+                Button("Move to Trash", role: .destructive) {
+                    model.trash(transaction)
+                    if model.errorMessage == nil {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .navigationTitle(transaction.payee?.name ?? "Transfer")
+        .toolbar { Button("Edit") { model.openEditSheet(transaction) } }
+    }
+}
+
+struct SettingsScreen: View {
+    @ObservedObject var model: CaptureModel
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Ledger") {
+                    NavigationLink {
+                        AccountsScreen(model: model)
+                    } label: {
+                        Label("Accounts", systemImage: "creditcard")
+                    }
+                    NavigationLink {
+                        CategoriesScreen(model: model)
+                    } label: {
+                        Label("Categories", systemImage: "square.grid.2x2")
+                    }
+                    NavigationLink {
+                        PayeesScreen(model: model)
+                    } label: {
+                        Label("Payees", systemImage: "person.2")
+                    }
+                }
+                Section("Data") {
+                    NavigationLink {
+                        ImportScreen(model: model)
+                    } label: {
+                        Label("Import CSV", systemImage: "square.and.arrow.down")
+                    }
+                    NavigationLink {
+                        TrashScreen(model: model)
+                    } label: {
+                        Label("Recently deleted", systemImage: "trash")
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+        }
+    }
+}
+
+struct CategoriesScreen: View {
+    @ObservedObject var model: CaptureModel
+    @State private var newName = ""
+    @State private var renamingCategory: LedgerCategory?
+    @State private var renameText = ""
+    @State private var message: String?
+
+    var body: some View {
+        Form {
+            if let message {
+                Section {
+                    Text(message)
+                        .foregroundStyle(.red)
+                }
+            }
+            Section("Add category") {
+                TextField("Category name", text: $newName)
+                Button("Add category", action: addCategory)
+            }
+            Section("Categories") {
+                ForEach(model.categories) { category in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(category.name)
+                            if !category.countsAsSpending {
+                                Text("Excluded from spending")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Button("Rename") {
+                            renameText = category.name
+                            renamingCategory = category
+                        }
+                        .buttonStyle(.borderless)
+                        Button("Remove", role: .destructive) {
+                            removeCategory(category)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Categories")
+        .sheet(item: $renamingCategory) { category in
+            NavigationStack {
+                Form {
+                    TextField("Category name", text: $renameText)
+                }
+                .navigationTitle("Rename \(category.name)")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {
+                            renamingCategory = nil
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            saveRename(category)
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear(perform: reload)
+    }
+
+    private func addCategory() {
+        do {
+            _ = try model.ledger.addCategory(name: newName, countsAsSpending: true)
+            newName = ""
+            message = nil
+            try model.reload()
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func saveRename(_ category: LedgerCategory) {
+        do {
+            _ = try model.ledger.renameCategory(id: category.id, to: renameText)
+            renamingCategory = nil
+            message = nil
+            try model.reload()
+        } catch {
+            renamingCategory = nil
+            message = error.localizedDescription
+        }
+    }
+
+    private func removeCategory(_ category: LedgerCategory) {
+        do {
+            try model.ledger.removeCategory(id: category.id)
+            message = nil
+            try model.reload()
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func reload() {
+        do {
+            try model.reload()
+            message = nil
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+}
+
+struct PayeesScreen: View {
+    @ObservedObject var model: CaptureModel
+    @State private var payees: [Payee] = []
+    @State private var mergeSource: Payee.ID?
+    @State private var mergeTarget: Payee.ID?
+    @State private var message: String?
+
+    var body: some View {
+        Form {
+            if let message {
+                Section {
+                    Text(message)
+                        .foregroundStyle(.red)
+                }
+            }
+            Section("Payees") {
+                if payees.isEmpty {
+                    Text("No payees yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(payees) { payee in
+                        Picker(payee.name, selection: binding(for: payee)) {
                             Text("None").tag(Optional<LedgerCategoryID>.none)
                             ForEach(model.categories) { category in
                                 Text(category.name).tag(Optional(category.id))
@@ -288,174 +696,133 @@ struct PeopleScreen: View {
                         }
                     }
                 }
-                Section("Alias") {
-                    TextField("AMZN MKTP", text: $aliasName)
-                    Picker("Counterparty", selection: $aliasTarget) {
-                        Text("Select").tag(Optional<Counterparty.ID>.none)
-                        ForEach(people) { person in
-                            Text(person.name).tag(Optional(person.id))
+            }
+            if payees.count >= 2 {
+                Section("Merge payees") {
+                    Picker("Merge", selection: $mergeSource) {
+                        Text("Select").tag(Optional<Payee.ID>.none)
+                        ForEach(payees) { payee in
+                            Text(payee.name).tag(Optional(payee.id))
                         }
                     }
-                    Button("Confirm alias", action: confirm)
+                    Picker("Into", selection: $mergeTarget) {
+                        Text("Select").tag(Optional<Payee.ID>.none)
+                        ForEach(payees.filter { $0.id != mergeSource }) { payee in
+                            Text(payee.name).tag(Optional(payee.id))
+                        }
+                    }
+                    Button("Merge payees", action: merge)
+                        .disabled(mergeSource == nil || mergeTarget == nil || mergeSource == mergeTarget)
                 }
             }
-            .navigationTitle("People")
-            .onAppear(perform: reload)
         }
+        .navigationTitle("Payees")
+        .onAppear(perform: reload)
     }
 
-    private func binding(for person: Counterparty) -> Binding<LedgerCategoryID?> {
+    private func binding(for payee: Payee) -> Binding<LedgerCategoryID?> {
         Binding(
-            get: { person.defaultCategory?.id },
+            get: { payee.defaultCategory?.id },
             set: { newValue in
-                if let newValue {
-                    try? model.ledger.setDefaultCategory(newValue, for: person.id)
+                do {
+                    if let newValue {
+                        try model.ledger.setDefaultCategory(newValue, for: payee.id)
+                    }
+                    message = nil
+                    reload()
+                } catch {
+                    message = error.localizedDescription
                 }
-                reload()
             }
         )
     }
 
-    private func confirm() {
-        guard let aliasTarget else { return }
-        try? model.ledger.confirmAlias(aliasName, of: aliasTarget)
-        aliasName = ""
-        reload()
+    private func merge() {
+        guard let mergeSource, let mergeTarget else {
+            message = "Select two payees to merge."
+            return
+        }
+        do {
+            try model.ledger.mergePayees(sourceID: mergeSource, into: mergeTarget)
+            self.mergeSource = nil
+            self.mergeTarget = nil
+            message = nil
+            reload()
+        } catch {
+            message = error.localizedDescription
+        }
     }
 
     private func reload() {
-        people = (try? model.ledger.counterparties()) ?? []
-        try? model.reloadFromOutside()
+        do {
+            payees = try model.ledger.payees()
+            try model.reload()
+            message = nil
+        } catch {
+            message = error.localizedDescription
+        }
     }
 }
 
 struct TrashScreen: View {
     @ObservedObject var model: CaptureModel
     @State private var entries: [TrashedEntry] = []
+    @State private var message: String?
 
     var body: some View {
-        NavigationStack {
-            List {
+        List {
+            if let message {
+                Section {
+                    Text(message)
+                        .foregroundStyle(.red)
+                }
+            }
+            if entries.isEmpty {
+                ContentUnavailableView(
+                    "Recently deleted is empty",
+                    systemImage: "trash",
+                    description: Text("Deleted transactions stay here for 30 days before automatic removal.")
+                )
+            } else {
                 ForEach(entries) { entry in
-                    VStack(alignment: .leading) {
-                        Text(entry.transaction.counterparty.name)
-                        Text("\(entry.daysRemaining) days remaining")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    Button("Restore") {
-                        try? model.ledger.restore(entry.id)
-                        reload()
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.transaction.payee?.name ?? "Transfer")
+                            Text("\(entry.transaction.category?.name ?? "Transfer") · \(entry.transaction.reportingDate.iso8601)")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Text("\(entry.daysRemaining) \(entry.daysRemaining == 1 ? "day" : "days") remaining")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(formatEuro(entry.transaction.amount.value))
+                            .monospacedDigit()
+                        Button("Restore") {
+                            do {
+                                try model.ledger.restore(entry.id)
+                                message = nil
+                                reload()
+                            } catch {
+                                message = error.localizedDescription
+                            }
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
             }
-            .navigationTitle("Trash")
-            .toolbar {
-                Button("Purge expired") {
-                    try? model.ledger.purgeExpiredTrash(today: model.today)
-                    reload()
-                }
-            }
-            .onAppear(perform: reload)
         }
+        .navigationTitle("Recently deleted")
+        .onAppear(perform: reload)
     }
 
     private func reload() {
-        entries = (try? model.ledger.trashedEntries(today: model.today)) ?? []
-        try? model.reloadFromOutside()
-    }
-}
-
-struct ImportScreen: View {
-    @ObservedObject var model: CaptureModel
-    @State private var csv = ""
-    @State private var rows: [ImportRow] = []
-    @State private var proposals: [ProposedPayeeDefault] = []
-    @State private var acceptedPayees: Set<String> = []
-    @State private var dateColumn = "Date"
-    @State private var message = ""
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                TextField("Reporting date column", text: $dateColumn)
-                TextEditor(text: $csv).frame(minHeight: 120)
-                Button("Preview", action: preview)
-                Button("Commit ready rows", action: commit)
-                if !message.isEmpty { Text(message) }
-                ForEach(rows) { row in
-                    VStack(alignment: .leading) {
-                        Text("\(row.payee ?? "") · \(row.amountText ?? "") · \(row.categoryName ?? "") · \(row.reportingDate ?? "")")
-                        Text(stateLabel(row.state)).font(.footnote).foregroundStyle(.secondary)
-                        if let proposed = row.proposedDefaultCategoryName, let payee = row.payee {
-                            Text("Proposed default for \(payee): \(proposed)")
-                                .font(.footnote)
-                            if acceptedPayees.contains(payee) {
-                                Text("Default will be accepted on commit.")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Button("Accept default") { acceptedPayees.insert(payee) }
-                            }
-                        }
-                    }
-                    if case .uncertainMatch = row.state {
-                        Button("Keep this row") { keep(row) }
-                    }
-                }
-                ForEach(proposals) { proposal in
-                    VStack(alignment: .leading) {
-                        Text("Proposed default for \(proposal.payee): \(proposal.categoryName)")
-                        Button("Accept default") { accept(proposal) }
-                    }
-                }
-            }
-            .navigationTitle("Import")
-        }
-    }
-
-    private func preview() {
-        rows = (try? model.ledger.previewImport(csv, mapping: ImportMapping(reportingDateColumn: dateColumn))) ?? []
-        proposals = (try? model.ledger.proposedPayeeDefaults()) ?? []
-        message = "\(rows.count) rows"
-    }
-
-    private func commit() {
-        let result = try? model.ledger.commitImport(
-            csv,
-            mapping: ImportMapping(reportingDateColumn: dateColumn),
-            acceptedPayees: acceptedPayees
-        )
-        message = "Imported \(result?.importedCount ?? 0)"
-        acceptedPayees = []
-        try? model.reloadFromOutside()
-        preview()
-    }
-
-    private func keep(_ row: ImportRow) {
-        _ = try? model.ledger.commitImport(
-            csv,
-            mapping: ImportMapping(reportingDateColumn: dateColumn),
-            uncertain: [row.index: .keep],
-            acceptedPayees: acceptedPayees
-        )
-        acceptedPayees = []
-        try? model.reloadFromOutside()
-        preview()
-    }
-
-    private func accept(_ proposal: ProposedPayeeDefault) {
-        try? model.ledger.acceptProposedPayeeDefault(for: proposal.counterpartyID)
-        try? model.reloadFromOutside()
-        preview()
-    }
-
-    private func stateLabel(_ state: ImportRowState) -> String {
-        switch state {
-        case .ready: "Ready"
-        case .needsCorrection(let reasons): reasons.joined(separator: " ")
-        case .definiteRepeat: "Definite repeat"
-        case .uncertainMatch: "Uncertain match"
+        do {
+            entries = try model.ledger.trashedEntries(today: model.today)
+            try model.reload()
+            message = nil
+        } catch {
+            message = error.localizedDescription
         }
     }
 }

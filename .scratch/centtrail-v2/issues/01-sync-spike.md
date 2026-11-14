@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] A minimal transaction/payee/category/account schema syncs between iPhone and Mac
 - [ ] Create, edit and delete made offline on one device appear on the other after reconnecting

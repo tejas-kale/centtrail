@@ -13,70 +13,129 @@ final class CaptureModel: ObservableObject {
     let ledger: Ledger
     let today: ReportingDate
 
+    @Published private(set) var editingEntryID: LedgerTransaction.ID?
+    @Published var draftNote = ""
     @Published var amountText = ""
-    @Published var kind: Kind?
-    @Published var counterparty = ""
-    @Published var reportingDateText = ""
+    @Published var kind: Kind = .expense
+    @Published var payee = ""
+    @Published var selectedDate: Date
     @Published var categoryID: LedgerCategoryID?
-    @Published var originalPurchaseID: LedgerTransaction.ID?
+    @Published var accountID: Account.ID?
+    @Published var destinationAccountID: Account.ID?
+    @Published var accounts: [Account] = []
     @Published var categories: [LedgerCategory] = []
+    @Published var payees: [Payee] = []
+    @Published private var frequentPayeesByKind: [Kind: [FrequentPayee]] = [:]
+
+    var frequentPayees: [FrequentPayee] {
+        frequentPayeesByKind[kind] ?? []
+    }
     @Published var transactions: [LedgerTransaction] = []
-    @Published var spendingCents = 0
-    @Published var message: String?
-    @Published var sentence = ""
-    @Published var modelNotice: String?
+    @Published var homeSummary: HomeSummary?
+    @Published var isPresentingAddSheet = false
+    @Published var draftMessage: String?
+    @Published var errorMessage: String?
+    @Published private(set) var isInterpretingSpeech = false
+
     private var applyingPrefill = false
     private var categoryChosenManually = false
+    nonisolated(unsafe) private var newEntryObserver: NSObjectProtocol?
+    private var ledgerObservation: LedgerObservation?
+    private var reloadScheduled = false
+    private var speechInterpretationID: UUID?
 
     init(ledger: Ledger, today: ReportingDate) throws {
         self.ledger = ledger
         self.today = today
+        self.selectedDate = Self.date(from: today)
         try reload()
-        NotificationCenter.default.addObserver(forName: .centtrailNewEntry, object: nil, queue: .main) { [weak self] _ in
+        accountID = accounts.first?.id
+        newEntryObserver = NotificationCenter.default.addObserver(forName: .centtrailNewEntry, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.clearDraft()
+                guard let self else { return }
+                _ = CenttrailEntryTrigger.shared.consumePendingNewEntry()
+                self.openAddSheet()
             }
+        }
+        if CenttrailEntryTrigger.shared.consumePendingNewEntry() {
+            openAddSheet()
+        }
+        // Edits pulled in by iCloud sync land in the ledger without passing
+        // through this model, so refresh whenever the ledger changes.
+        ledgerObservation = ledger.observeChanges { [weak self] in
+            Task { @MainActor in self?.scheduleReload() }
         }
     }
 
+    deinit {
+        if let newEntryObserver {
+            NotificationCenter.default.removeObserver(newEntryObserver)
+        }
+    }
+
+    func openAddSheet() {
+        clearDraft()
+        isPresentingAddSheet = true
+    }
+
+    func openEditSheet(_ transaction: LedgerTransaction) {
+        clearDraft()
+        editingEntryID = transaction.id
+        amountText = Self.formatAmountInput(transaction.amount)
+        kind = transaction.kind
+        payee = transaction.payee?.name ?? ""
+        selectedDate = Self.date(from: transaction.reportingDate)
+        categoryID = transaction.category?.id
+        categoryChosenManually = transaction.categoryProvenance == .overridden
+        accountID = transaction.account.id
+        destinationAccountID = transaction.destinationAccount?.id
+        draftNote = transaction.note ?? ""
+        isPresentingAddSheet = true
+    }
+
     func clearDraft() {
+        cancelSpeechInterpretation()
+        editingEntryID = nil
+        draftNote = ""
         amountText = ""
-        kind = nil
-        counterparty = ""
-        reportingDateText = ""
+        kind = .expense
+        payee = ""
+        selectedDate = Self.date(from: today)
         categoryID = nil
-        originalPurchaseID = nil
-        sentence = ""
+        accountID = accounts.first?.id
+        destinationAccountID = accounts.first(where: { $0.name == "India" })?.id
         categoryChosenManually = false
-        message = nil
+        draftMessage = nil
     }
 
     func prefillCategory() {
         guard !categoryChosenManually else { return }
-        guard let category = try? ledger.defaultCategory(forCounterpartyName: counterparty) else { return }
-        applyingPrefill = true
-        categoryID = category.id
-        applyingPrefill = false
+        do {
+            guard let category = try ledger.defaultCategory(forPayeeName: payee) else { return }
+            applyingPrefill = true
+            categoryID = category.id
+            applyingPrefill = false
+        } catch {
+            draftMessage = error.localizedDescription
+        }
+    }
+
+    func selectSuggestedPayee(_ name: String) {
+        payee = name
+        prefillCategory()
+    }
+
+    func selectFrequentPayee(_ suggestion: FrequentPayee) {
+        categoryChosenManually = false
+        payee = suggestion.payee.name
+        categoryID = suggestion.payee.defaultCategory?.id
+        accountID = suggestion.lastUsedAccount.id
     }
 
     func noteManualCategory() {
-        if !applyingPrefill { categoryChosenManually = true }
-    }
-
-    func applySentence() {
-        let interpreter = Interpreter(ledger: ledger, today: today, modelUnavailableReason: .modelNotReady)
-        modelNotice = "Apple Intelligence is unavailable. The short form stays open, and Centtrail filled what it could from the sentence."
-        guard let parsed = try? interpreter.interpretCapture(sentence) else { return }
-        if let amount = parsed.draft.amount {
-            amountText = String(format: "%d.%02d", amount.value / 100, amount.value % 100)
+        if !applyingPrefill {
+            categoryChosenManually = true
         }
-        kind = parsed.draft.kind
-        if let name = parsed.draft.counterparty { counterparty = name }
-        if let date = parsed.draft.reportingDate { reportingDateText = date.iso8601 }
-        applyingPrefill = true
-        categoryID = parsed.draft.categoryID
-        applyingPrefill = false
-        categoryChosenManually = parsed.draft.overridesCategory
     }
 
     static func openDefault() throws -> CaptureModel {
@@ -88,151 +147,132 @@ final class CaptureModel: ObservableObject {
         )
         let directory = support.appendingPathComponent("Centtrail", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let ledger = try Ledger.open(at: directory.appendingPathComponent("ledger.sqlite"))
+        // v2 starts clean for CSV re-import and never opens the v1 database.
+        let ledger = try Ledger.open(
+            at: directory.appendingPathComponent("ledger-v2.sqlite"),
+            sync: LedgerSyncSettings.syncMode(infoDictionary: Bundle.main.infoDictionary ?? [:])
+        )
         guard let today = civilDate(Date(), calendar: .current) else {
             throw CalendarDateError()
         }
         return try CaptureModel(ledger: ledger, today: today)
     }
 
-    func useToday() {
-        reportingDateText = today.iso8601
-    }
-
-    func save() {
-        let draft = EntryDraft(
-            amount: Cents(euroText: amountText),
-            kind: kind,
-            counterparty: counterparty,
-            reportingDate: ReportingDate(iso8601: reportingDateText),
-            categoryID: categoryID,
-            originalPurchaseID: kind == .refund ? originalPurchaseID : nil
-        )
+    @discardableResult
+    func save() -> Bool {
+        let draft = currentDraft
         do {
-            _ = try ledger.record(draft)
+            if let editingEntryID {
+                _ = try ledger.update(editingEntryID, with: draft)
+            } else {
+                _ = try ledger.record(draft)
+            }
             clearDraft()
             try reload()
+            return true
         } catch let error as RecordEntryError {
-            message = refusalMessage(error)
+            draftMessage = refusalMessage(error)
+            return false
         } catch {
-            message = error.localizedDescription
+            draftMessage = error.localizedDescription
+            return false
         }
     }
 
-    func reloadFromOutside() throws {
-        try reload()
+    private var currentDraft: EntryDraft {
+        EntryDraft(
+            amount: Cents(euroText: amountText),
+            kind: kind,
+            payee: payee,
+            reportingDate: civilDate(selectedDate, calendar: .current),
+            categoryID: kind == .transfer ? nil : categoryID,
+            accountID: accountID,
+            destinationAccountID: kind == .transfer ? destinationAccountID : nil,
+            overridesCategory: categoryChosenManually,
+            note: draftNote.isEmpty ? nil : draftNote
+        )
     }
 
-    private func reload() throws {
-        categories = try ledger.categories()
-        transactions = try ledger.transactions()
-        switch try ledger.runReport(.currentMonthSpending, today: today) {
-        case .spendingTotal(let cents):
-            spendingCents = cents.value
-        default:
-            break
-        }
-    }
-}
-
-struct CaptureScreen: View {
-    @ObservedObject var model: CaptureModel
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    LabeledContent("This month", value: signedEuro(model.spendingCents))
-                } footer: {
-                    Text(monthTitle(model.today))
-                }
-
-                Section("Sentence") {
-                    if let modelNotice = model.modelNotice {
-                        Text(modelNotice)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    TextField("20 at Middle Eats yesterday", text: $model.sentence)
-                    Button("Fill draft", action: model.applySentence)
-                }
-
-                Section("New entry") {
-                    TextField("Amount", text: $model.amountText, prompt: Text("0.00"))
-                        #if os(iOS)
-                        .keyboardType(.decimalPad)
-                        #endif
-                    Picker("Kind", selection: $model.kind) {
-                        Text("Select").tag(Optional<Kind>.none)
-                        Text("Expense").tag(Optional(Kind.expense))
-                        Text("Income").tag(Optional(Kind.income))
-                        Text("Refund").tag(Optional(Kind.refund))
-                        Text("Transfer").tag(Optional(Kind.transfer))
-                        Text("Repayment").tag(Optional(Kind.repayment))
-                    }
-                    .onChange(of: model.kind) { _, newKind in
-                        if newKind != .refund { model.originalPurchaseID = nil }
-                    }
-                    if model.kind == .refund {
-                        Picker("Original purchase", selection: $model.originalPurchaseID) {
-                            Text("None").tag(Optional<LedgerTransaction.ID>.none)
-                            ForEach(model.transactions.filter { $0.kind == .expense }) { purchase in
-                                Text(purchaseLabel(purchase)).tag(Optional(purchase.id))
-                            }
-                        }
-                    }
-                    if model.kind != .refund || model.originalPurchaseID == nil {
-                        TextField("Counterparty", text: $model.counterparty, prompt: Text("Who was paid"))
-                            .onChange(of: model.counterparty) { _, _ in model.prefillCategory() }
-                    }
-                    HStack {
-                        TextField("Reporting date", text: $model.reportingDateText, prompt: Text("YYYY-MM-DD"))
-                        Button("Today", action: model.useToday)
-                    }
-                    if model.kind != .refund || model.originalPurchaseID == nil {
-                        Picker("Category", selection: $model.categoryID) {
-                            Text("Select").tag(Optional<LedgerCategoryID>.none)
-                            ForEach(model.categories) { category in
-                                Text(category.name).tag(Optional(category.id))
-                            }
-                        }
-                        .onChange(of: model.categoryID) { _, _ in model.noteManualCategory() }
-                    }
-                    if let message = model.message {
-                        Text(message)
-                            .foregroundStyle(.red)
-                    }
-                    Button("Save", action: model.save)
-                }
-
-                Section("Transactions") {
-                    if model.transactions.isEmpty {
-                        Text("No transactions yet")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(model.transactions) { transaction in
-                            NavigationLink {
-                                TransactionDetail(transaction: transaction, ledger: model.ledger)
-                            } label: {
-                                TransactionRow(transaction: transaction)
-                            }
-                            .swipeActions {
-                                Button("Trash", role: .destructive) {
-                                    try? model.ledger.trash(transaction.id, on: model.today)
-                                    try? model.reloadFromOutside()
-                                }
-                            }
-                        }
-                    }
-                }
+    func interpretSpeech(_ text: String) async {
+        let id = UUID()
+        speechInterpretationID = id
+        isInterpretingSpeech = true
+        draftMessage = nil
+        let defaults = currentDraft
+        defer { if speechInterpretationID == id { isInterpretingSpeech = false } }
+        do {
+            let interpretation = try await Interpreter(ledger: ledger, today: today)
+                .interpretCaptureAsync(text, defaults: defaults)
+            guard speechInterpretationID == id else { return }
+            let draft = interpretation.draft
+            if let amount = draft.amount {
+                amountText = Self.formatAmountInput(amount)
             }
-            .navigationTitle("Centtrail")
+            if let kind = draft.kind { self.kind = kind }
+            if let payee = draft.payee { self.payee = payee }
+            if let date = draft.reportingDate { selectedDate = Self.date(from: date) }
+            categoryID = draft.categoryID
+            categoryChosenManually = draft.overridesCategory
+            accountID = draft.accountID
+            destinationAccountID = draft.destinationAccountID
+        } catch {
+            guard speechInterpretationID == id else { return }
+            draftMessage = "The spoken entry could not be filled: \(error.localizedDescription). Try again or enter it by hand."
         }
     }
-}
 
-private func purchaseLabel(_ purchase: LedgerTransaction) -> String {
-    "\(purchase.counterparty.name) · \(signedEuro(purchase.amount.value)) · \(purchase.reportingDate.iso8601)"
+    func cancelSpeechInterpretation() {
+        speechInterpretationID = nil
+        isInterpretingSpeech = false
+    }
+
+    func trash(_ transaction: LedgerTransaction) {
+        do {
+            try ledger.trash(transaction.id, on: today)
+            try reload()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private static func formatAmountInput(_ amount: Cents) -> String {
+        "\(amount.value / 100).\(String(format: "%02d", amount.value % 100))"
+    }
+
+    private func scheduleReload() {
+        guard !reloadScheduled else { return }
+        reloadScheduled = true
+        Task { @MainActor in
+            reloadScheduled = false
+            do {
+                try reload()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func reload() throws {
+        try ledger.purgeExpiredTrash(today: today)
+        accounts = try ledger.accounts()
+        categories = try ledger.categories()
+        payees = try ledger.payees()
+        frequentPayeesByKind = [
+            .expense: try ledger.frequentPayees(kind: .expense),
+            .income: try ledger.frequentPayees(kind: .income),
+        ]
+        transactions = try ledger.transactions()
+        homeSummary = try ledger.homeSummary(on: today)
+    }
+
+    private static func date(from reportingDate: ReportingDate) -> Date {
+        var components = DateComponents()
+        components.year = reportingDate.year
+        components.month = reportingDate.month
+        components.day = reportingDate.day
+        return Calendar.current.date(from: components) ?? Date()
+    }
 }
 
 public struct CaptureRoot: View {
@@ -242,18 +282,7 @@ public struct CaptureRoot: View {
 
     public var body: some View {
         if let model = loader.model {
-            TabView {
-                CaptureScreen(model: model)
-                    .tabItem { Label("Capture", systemImage: "plus") }
-                ReportsScreen(model: model)
-                    .tabItem { Label("Reports", systemImage: "chart.bar") }
-                PeopleScreen(model: model)
-                    .tabItem { Label("People", systemImage: "person.2") }
-                TrashScreen(model: model)
-                    .tabItem { Label("Trash", systemImage: "trash") }
-                ImportScreen(model: model)
-                    .tabItem { Label("Import", systemImage: "square.and.arrow.down") }
-            }
+            AppTabShell(model: model)
         } else if let failure = loader.failure {
             ContentUnavailableView(
                 "The ledger could not be opened",
@@ -262,6 +291,28 @@ public struct CaptureRoot: View {
             )
         } else {
             ProgressView("Opening the ledger")
+        }
+    }
+}
+
+private struct AppTabShell: View {
+    @ObservedObject var model: CaptureModel
+
+    var body: some View {
+        TabView {
+            Tab("Home", systemImage: "house") {
+                HomeScreen(model: model)
+            }
+            Tab("Ask", systemImage: "sparkles") {
+                AskScreen(model: model)
+            }
+            Tab("Settings", systemImage: "gearshape") {
+                SettingsScreen(model: model)
+            }
+        }
+        .tabViewStyle(.sidebarAdaptable)
+        .sheet(isPresented: $model.isPresentingAddSheet) {
+            AddEntrySheet(model: model)
         }
     }
 }
@@ -286,18 +337,15 @@ struct TransactionRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(transaction.counterparty.name)
-                Text("\(transaction.category.name) · \(transaction.reportingDate.iso8601)")
+                Text(transaction.payee?.name ?? "Transfer")
+                Text("\(transaction.account.name)\(transaction.destinationAccount.map { " → \($0.name)" } ?? "") · \(transaction.reportingDate.iso8601)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(signedEuro(transaction.amount.value))
-                Text(transaction.kind.rawValue.capitalized)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+            Text(formatEuro(transaction.amount.value))
+                .foregroundStyle(transaction.kind == .income ? .green : .primary)
+                .monospacedDigit()
         }
     }
 }
@@ -312,34 +360,57 @@ private func civilDate(_ date: Date, calendar: Calendar) -> ReportingDate? {
     return ReportingDate(year: year, month: month, day: day)
 }
 
-func signedEuro(_ cents: Int) -> String {
-    let sign = cents < 0 ? "−" : ""
-    let absolute = abs(cents)
-    return "\(sign)€\(absolute / 100).\(String(format: "%02d", absolute % 100))"
+func formatEuro(_ cents: Int) -> String {
+    (Decimal(cents) / 100).formatted(.currency(code: "EUR"))
 }
 
+func formatSignedEuro(_ cents: Int) -> String {
+    let sign = cents > 0 ? "+" : (cents < 0 ? "−" : "")
+    let absFormatted = (Decimal(abs(cents)) / 100).formatted(.currency(code: "EUR"))
+    return "\(sign)\(absFormatted)"
+}
+
+func formatPercentageChange(_ percentage: Double) -> String {
+    let sign = percentage > 0 ? "+" : ""
+    return "\(sign)\(percentage.formatted(.number.precision(.fractionLength(0...1))))%"
+}
+
+private let fullMonthNames = [
+    "",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
+
 func monthTitle(_ date: ReportingDate) -> String {
-    let names = [
+    guard fullMonthNames.indices.contains(date.month) else { return date.iso8601 }
+    return "\(monthName(date)) \(date.year)"
+}
+
+func monthName(_ date: ReportingDate) -> String {
+    guard fullMonthNames.indices.contains(date.month) else { return date.iso8601 }
+    return fullMonthNames[date.month]
+}
+
+func shortRangeLabel(_ range: DateRange) -> String {
+    let shortMonths = [
         "",
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December",
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ]
-    guard names.indices.contains(date.month) else { return date.iso8601 }
-    return "\(names[date.month]) \(date.year)"
+    let month = shortMonths.indices.contains(range.end.month) ? shortMonths[range.end.month] : "\(range.end.month)"
+    return "\(range.start.day)–\(range.end.day) \(month)"
 }
 
 private func refusalMessage(_ error: RecordEntryError) -> String {
     switch error {
     case .incomplete(let fields):
-        let ordered: [EntryField] = [.amount, .kind, .counterparty, .reportingDate, .category]
+        let ordered: [EntryField] = [.amount, .kind, .payee, .reportingDate, .category, .account, .destinationAccount]
         let missing = ordered.filter(fields.contains).map(fieldName)
         return "Enter \(missing.joined(separator: ", "))."
     case .unknownCategory:
         return "Choose one of the owner's categories."
     case .unknownEntry:
         return "That entry could not be found."
-    case .linkedRefundNeedsPurchase:
-        return "Choose the purchase this refund belongs to."
     }
 }
 
@@ -347,8 +418,10 @@ private func fieldName(_ field: EntryField) -> String {
     switch field {
     case .amount: "an amount"
     case .kind: "a kind"
-    case .counterparty: "a counterparty"
+    case .payee: "a payee"
     case .reportingDate: "a reporting date"
     case .category: "a category"
+    case .account: "an account"
+    case .destinationAccount: "a destination account"
     }
 }

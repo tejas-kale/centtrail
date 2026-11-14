@@ -27,151 +27,94 @@ public struct Category: Hashable, Sendable, Identifiable {
 }
 
 public final class Ledger {
+    public enum SyncMode: Equatable, Sendable {
+        /// Local store only; nothing leaves the device.
+        case disabled
+        /// Syncs through the owner's iCloud account using the given CloudKit
+        /// container. The signed app needs the matching iCloud entitlement.
+        case enabled(containerIdentifier: String)
+    }
+
     let connection: SQLiteConnection
 
-    public static func openInMemory() throws -> Ledger {
-        try Ledger(path: ":memory:")
+    public static func openInMemory(sync: SyncMode = .disabled) throws -> Ledger {
+        try Ledger(path: nil, syncMode: sync)
     }
 
-    public static func open(at file: URL) throws -> Ledger {
-        try Ledger(path: file.path(percentEncoded: false))
+    public static func open(at file: URL, sync: SyncMode = .disabled) throws -> Ledger {
+        try Ledger(path: file.path(percentEncoded: false), syncMode: sync)
     }
 
-    init(path: String) throws {
-        connection = try SQLiteConnection(path: path)
-        try connection.execute("PRAGMA foreign_keys = ON")
-        try connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS category (
-                id TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL UNIQUE
-            )
-            """
-        )
-        try connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS counterparty (
-                id TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL UNIQUE
-            )
-            """
-        )
-        try connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS entry (
-                id TEXT PRIMARY KEY NOT NULL,
-                amount_cents INTEGER NOT NULL,
-                kind TEXT NOT NULL,
-                counterparty_id TEXT NOT NULL REFERENCES counterparty(id),
-                reporting_date TEXT NOT NULL,
-                category_id TEXT NOT NULL REFERENCES category(id)
-            )
-            """
-        )
-        try migrate()
+    init(path: String?, syncMode: SyncMode) throws {
+        connection = try SQLiteConnection(path: path, syncMode: syncMode)
         try seedCategories()
+        try seedAccounts()
     }
 
-    func migrate() throws {
-        try addColumn("category", "counts_as_spending INTEGER NOT NULL DEFAULT 1")
-        try addColumn("counterparty", "default_category_id TEXT")
-        try addColumn("entry", "category_provenance TEXT NOT NULL DEFAULT 'inherited'")
-        try addColumn("entry", "note TEXT")
-        try addColumn("entry", "original_entry_id TEXT")
-        try addColumn("entry", "trashed_on TEXT")
-        try connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS counterparty_alias (
-                id TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL UNIQUE,
-                counterparty_id TEXT NOT NULL REFERENCES counterparty(id)
-            )
-            """
-        )
-        try connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS import_row (
-                id TEXT PRIMARY KEY NOT NULL,
-                entry_id TEXT,
-                source_timestamp TEXT NOT NULL,
-                amount_cents INTEGER NOT NULL,
-                payee TEXT NOT NULL,
-                source_account TEXT NOT NULL
-            )
-            """
-        )
-        try connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS proposed_payee_default (
-                counterparty_id TEXT PRIMARY KEY NOT NULL REFERENCES counterparty(id),
-                category_id TEXT NOT NULL REFERENCES category(id)
-            )
-            """
-        )
-        try connection.execute("UPDATE category SET counts_as_spending = 0 WHERE name = 'Savings'")
-        try connection.execute(
-            """
-            UPDATE counterparty
-            SET default_category_id = (
-                SELECT category_id FROM entry
-                WHERE entry.counterparty_id = counterparty.id
-                ORDER BY rowid LIMIT 1
-            )
-            WHERE default_category_id IS NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM proposed_payee_default AS proposal
-                WHERE proposal.counterparty_id = counterparty.id
-              )
-            """
-        )
-    }
-
-    private func addColumn(_ table: String, _ definition: String) throws {
-        let column = definition.split(separator: " ").first.map(String.init) ?? definition
-        let rows = try connection.query("PRAGMA table_info(\(table))")
-        let names = rows.compactMap { $0.count > 1 ? $0[1].text : nil }
-        if names.contains(column) { return }
-        try connection.execute("ALTER TABLE \(table) ADD COLUMN \(definition)")
+    /// Calls `onChange` after every committed change to the ledger, whether made
+    /// on this device or pulled in by iCloud sync. Keep the returned observation
+    /// alive for as long as you want to hear about changes.
+    public func observeChanges(_ onChange: @escaping @Sendable () -> Void) -> LedgerObservation {
+        connection.observeChanges(onChange)
     }
 
     public func record(_ draft: EntryDraft) throws -> Transaction {
         try record(draft, proposeDefaultForNewPayee: false)
     }
 
-    func record(_ draft: EntryDraft, proposeDefaultForNewPayee: Bool) throws -> Transaction {
-        if draft.kind == .refund, draft.originalPurchaseID != nil {
-            return try recordLinkedRefund(draft)
+    /// Replaces the editable fields in one transaction, preserving identity,
+    /// import history and trash state. Validation is shared with capture.
+    public func update(_ id: Transaction.ID, with draft: EntryDraft) throws -> Transaction {
+        try connection.inTransaction {
+            _ = try transaction(id: id)
+            return try record(draft, proposeDefaultForNewPayee: false, entryID: id.rawValue)
         }
-        let counterpartyName = draft.counterparty?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    func record(_ draft: EntryDraft, proposeDefaultForNewPayee: Bool, entryID: UUID = UUID()) throws -> Transaction {
+        let payeeName = draft.payee?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var missing: Set<EntryField> = []
         if draft.amount == nil { missing.insert(.amount) }
         if draft.kind == nil { missing.insert(.kind) }
-        if counterpartyName.isEmpty { missing.insert(.counterparty) }
+        if draft.kind != .transfer, payeeName.isEmpty { missing.insert(.payee) }
         if draft.reportingDate == nil { missing.insert(.reportingDate) }
-        if draft.categoryID == nil { missing.insert(.category) }
+        if draft.kind != .transfer, draft.categoryID == nil { missing.insert(.category) }
+        if draft.accountID == nil { missing.insert(.account) }
+        if draft.kind == .transfer, draft.destinationAccountID == nil { missing.insert(.destinationAccount) }
         guard missing.isEmpty,
               let amount = draft.amount,
               let kind = draft.kind,
               let reportingDate = draft.reportingDate,
-              let categoryID = draft.categoryID
+              let accountID = draft.accountID
         else {
             throw RecordEntryError.incomplete(missing)
         }
 
+        _ = try account(id: accountID)
+        if kind == .transfer {
+            guard let destinationID = draft.destinationAccountID else { throw RecordEntryError.incomplete([.destinationAccount]) }
+            _ = try account(id: destinationID)
+            guard accountID != destinationID else { throw LedgerError(message: "Choose two different accounts for a transfer.") }
+            return try connection.inTransaction {
+                try insertEntry(id: entryID, amount: amount, kind: kind, payeeID: nil, reportingDate: reportingDate,
+                    categoryID: nil, accountID: accountID, destinationAccountID: destinationID, provenance: .inherited, note: draft.note)
+                return try requireTransaction(id: entryID)
+            }
+        }
+        guard draft.destinationAccountID == nil else { throw LedgerError(message: "Only a transfer has a destination account.") }
+        guard let categoryID = draft.categoryID else { throw RecordEntryError.incomplete([.category]) }
         let category = try category(id: categoryID)
-        let entryID = UUID()
-        try connection.execute("BEGIN")
-        do {
-            let counterpartyID = try findOrCreateCounterparty(
-                named: counterpartyName,
+        return try connection.inTransaction {
+            let payeeID = try findOrCreatePayee(
+                named: payeeName,
                 defaultCategory: category.id,
                 proposeInsteadOfApplying: proposeDefaultForNewPayee
             )
-            let storedCounterparty = try requireCounterparty(id: counterpartyID)
-            let proposedCategoryID = try proposedCategoryID(for: counterpartyID)
+            let storedPayee = try requirePayee(id: payeeID)
+            let proposedCategoryID = try proposedCategoryID(for: payeeID)
             let provenance = categoryProvenance(
                 draft: draft,
-                counterparty: storedCounterparty,
+                payee: storedPayee,
                 category: category,
                 proposedCategoryID: proposedCategoryID
             )
@@ -179,46 +122,15 @@ public final class Ledger {
                 id: entryID,
                 amount: amount,
                 kind: kind,
-                counterpartyID: counterpartyID,
+                payeeID: payeeID,
                 reportingDate: reportingDate,
                 categoryID: category.id,
+                accountID: accountID,
+                destinationAccountID: nil,
                 provenance: provenance,
-                note: draft.note,
-                originalPurchaseID: nil
+                note: draft.note
             )
-            try connection.execute("COMMIT")
             return try requireTransaction(id: entryID)
-        } catch {
-            try? connection.execute("ROLLBACK")
-            throw error
-        }
-    }
-
-    private func recordLinkedRefund(_ draft: EntryDraft) throws -> Transaction {
-        guard let amount = draft.amount, let reportingDate = draft.reportingDate, let originalID = draft.originalPurchaseID else {
-            throw RecordEntryError.linkedRefundNeedsPurchase
-        }
-        let original = try transaction(id: originalID)
-        guard original.kind == .expense else { throw RecordEntryError.linkedRefundNeedsPurchase }
-        let entryID = UUID()
-        try connection.execute("BEGIN")
-        do {
-            try insertEntry(
-                id: entryID,
-                amount: amount,
-                kind: .refund,
-                counterpartyID: original.counterparty.id.rawValue,
-                reportingDate: reportingDate,
-                categoryID: original.category.id,
-                provenance: .inherited,
-                note: draft.note,
-                originalPurchaseID: original.id.rawValue
-            )
-            try connection.execute("COMMIT")
-            return try requireTransaction(id: entryID)
-        } catch {
-            try? connection.execute("ROLLBACK")
-            throw error
         }
     }
 
@@ -237,20 +149,6 @@ public final class Ledger {
         return try rows.map(decodeTransaction)
     }
 
-    public func linkedRefunds(for purchaseID: Transaction.ID) throws -> [Transaction] {
-        let rows = try connection.query(
-            """
-            \(entrySelectSQL)
-            WHERE entry.original_entry_id = ?
-              AND entry.kind = 'refund'
-              AND entry.trashed_on IS NULL
-            ORDER BY entry.reporting_date DESC, entry.rowid DESC
-            """,
-            bindings: [.text(stored(purchaseID.rawValue))]
-        )
-        return try rows.map(decodeTransaction)
-    }
-
     func monthBounds(containing today: ReportingDate) -> (start: String, end: String) {
         let start = String(format: "%04d-%02d-01", today.year, today.month)
         let end: String
@@ -262,12 +160,12 @@ public final class Ledger {
         return (start, end)
     }
 
-    func findOrCreateCounterparty(
+    func findOrCreatePayee(
         named name: String,
         defaultCategory: Category.ID,
         proposeInsteadOfApplying: Bool = false
     ) throws -> UUID {
-        if let resolved = try resolveCounterpartyID(named: name) {
+        if let resolved = try resolvePayeeID(named: name) {
             return resolved
         }
         let id = UUID()
@@ -289,10 +187,10 @@ public final class Ledger {
         return id
     }
 
-    func proposedCategoryID(for counterpartyID: UUID) throws -> Category.ID? {
+    func proposedCategoryID(for payeeID: UUID) throws -> Category.ID? {
         let rows = try connection.query(
             "SELECT category_id FROM proposed_payee_default WHERE counterparty_id = ?",
-            bindings: [.text(stored(counterpartyID))]
+            bindings: [.text(stored(payeeID))]
         )
         guard let text = rows.first?.first?.text, let id = UUID(uuidString: text) else { return nil }
         return Category.ID(rawValue: id)
@@ -300,28 +198,28 @@ public final class Ledger {
 
     private func categoryProvenance(
         draft: EntryDraft,
-        counterparty: Counterparty,
+        payee: Payee,
         category: Category,
         proposedCategoryID: Category.ID?
     ) -> CategoryProvenance {
         if draft.overridesCategory { return .overridden }
-        if let defaultCategory = counterparty.defaultCategory {
+        if let defaultCategory = payee.defaultCategory {
             return defaultCategory.id == category.id ? .inherited : .overridden
         }
         if proposedCategoryID == category.id { return .inherited }
         return .overridden
     }
 
-    func resolveCounterpartyID(named name: String) throws -> UUID? {
+    func resolvePayeeID(named name: String) throws -> UUID? {
         let alias = try connection.query(
-            "SELECT counterparty_id FROM counterparty_alias WHERE name = ?",
+            "SELECT counterparty_id FROM counterparty_alias WHERE name = ? COLLATE NOCASE ORDER BY id LIMIT 1",
             bindings: [.text(name)]
         )
         if let idText = alias.first?.first?.text, let id = UUID(uuidString: idText) {
             return id
         }
         let existing = try connection.query(
-            "SELECT id FROM counterparty WHERE name = ?",
+            "SELECT id FROM counterparty WHERE name = ? COLLATE NOCASE ORDER BY id LIMIT 1",
             bindings: [.text(name)]
         )
         if let idText = existing.first?.first?.text, let id = UUID(uuidString: idText) {
@@ -332,7 +230,7 @@ public final class Ledger {
 
     func category(id: Category.ID) throws -> Category {
         let rows = try connection.query(
-            "SELECT name, counts_as_spending FROM category WHERE id = ?",
+            "SELECT name, counts_as_spending FROM effective_category WHERE id = ? AND is_removed = 0",
             bindings: [.text(stored(id.rawValue))]
         )
         guard let name = rows.first?.first?.text, let spending = rows.first?.dropFirst().first?.integer else {
@@ -346,7 +244,7 @@ public final class Ledger {
     }
 
     public func categories() throws -> [Category] {
-        let rows = try connection.query("SELECT id, name, counts_as_spending FROM category ORDER BY rowid")
+        let rows = try connection.query("SELECT id, name, counts_as_spending FROM effective_category WHERE is_removed = 0 ORDER BY rowid")
         return try rows.map { row in
             guard row.count == 3,
                   let idText = row[0].text,
@@ -361,13 +259,16 @@ public final class Ledger {
     }
 
     private func seedCategories() throws {
-        for sourceName in OwnerCategories.sourceNames {
-            let name = sourceName.trimmingCharacters(in: .whitespacesAndNewlines)
-            try connection.execute(
-                "INSERT INTO category (id, name) VALUES (?, ?) ON CONFLICT(name) DO NOTHING",
-                bindings: [.text(UUID().uuidString.lowercased()), .text(name)]
-            )
+        try connection.inTransaction {
+            for sourceName in OwnerCategories.sourceNames {
+                let name = sourceName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let id = OwnerCategories.deterministicID(for: name)
+                let countsAsSpending: Int64 = name == "Savings" ? 0 : 1
+                try connection.execute(
+                    "INSERT OR IGNORE INTO category (id, name, counts_as_spending) VALUES (?, ?, ?)",
+                    bindings: [.text(stored(id)), .text(name), .integer(countsAsSpending)]
+                )
+            }
         }
-        try connection.execute("UPDATE category SET counts_as_spending = 0 WHERE name = 'Savings'")
     }
 }

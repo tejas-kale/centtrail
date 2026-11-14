@@ -4,7 +4,7 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] A new category appears in the + form and in Ask on both devices
 - [ ] Renaming keeps every transaction's classification

@@ -15,24 +15,25 @@ import Testing
     #expect(try ledger.commitImport(csv).importedCount == 29)
     #expect(try ledger.commitImport(csv).importedCount == 0)
     #expect(try ledger.transactions().count == 29)
-    let names = try ledger.counterparties().map(\.name)
+    let names = try ledger.payees().map(\.name)
     #expect(names.contains("REWE"))
     #expect(names.contains("WinSIM"))
     #expect(names.contains("REWE ") == false)
-    #expect(try ledger.defaultCategory(forCounterpartyName: "ALDI Data and Analytics") == nil)
-    #expect(try ledger.defaultCategory(forCounterpartyName: "Middle Eats") == nil)
-    #expect(try ledger.defaultCategory(forCounterpartyName: "WinSIM") == nil)
+    #expect(try ledger.defaultCategory(forPayeeName: "ALDI Data and Analytics") == nil)
+    #expect(try ledger.defaultCategory(forPayeeName: "Middle Eats") == nil)
+    #expect(try ledger.defaultCategory(forPayeeName: "WinSIM") == nil)
     let proposals = try ledger.proposedPayeeDefaults()
     #expect(proposals.first { $0.payee == "ALDI Data and Analytics" }?.categoryName == "Salary")
     #expect(proposals.first { $0.payee == "Middle Eats" }?.categoryName == "Restaurant")
     #expect(proposals.first { $0.payee == "WinSIM" }?.categoryName == "Utilities")
     for proposal in proposals where ["ALDI Data and Analytics", "Middle Eats", "WinSIM"].contains(proposal.payee) {
-        try ledger.acceptProposedPayeeDefault(for: proposal.counterpartyID)
+        try ledger.acceptProposedPayeeDefault(for: proposal.payeeID)
     }
-    #expect(try ledger.defaultCategory(forCounterpartyName: "ALDI Data and Analytics")?.name == "Salary")
-    #expect(try ledger.defaultCategory(forCounterpartyName: "Middle Eats")?.name == "Restaurant")
-    #expect(try ledger.defaultCategory(forCounterpartyName: "WinSIM")?.name == "Utilities")
-    let booking = try #require(try ledger.transactions().first { $0.counterparty.name == "Booking" })
+    #expect(try ledger.defaultCategory(forPayeeName: "ALDI Data and Analytics")?.name == "Salary")
+    #expect(try ledger.defaultCategory(forPayeeName: "Middle Eats")?.name == "Restaurant")
+    #expect(try ledger.defaultCategory(forPayeeName: "WinSIM")?.name == "Utilities")
+    let booking = try #require(try ledger.transactions().first { $0.payee!.name == "Booking" })
+    #expect(Set(try ledger.transactions().map(\.account.name)) == ["N26", "Revolut", "Cash"])
     #expect(booking.note == "For the stay on April 29-30")
     #expect(booking.reportingDate.iso8601 == "2025-02-16")
     #expect(preview[0].amountText == "4164.84")
@@ -53,13 +54,12 @@ import Testing
     #expect(unknown.contains("Unknown category Not A Category."))
     guard case .needsCorrection(let currency) = preview[1].state else { Issue.record("currency"); return }
     #expect(currency.contains("Only EUR at rate 1.0 can be imported."))
-    guard case .needsCorrection(let positive) = preview[2].state else { Issue.record("positive"); return }
-    #expect(positive.contains("A positive amount in an expense category is held until the refund and transfer format is confirmed."))
+    #expect(preview[2].state == .ready)
     #expect(preview[3].state == .ready)
     #expect(preview[3].reportingDate == "2026-05-01")
     #expect(preview[4].state == .uncertainMatch)
-    #expect(try ledger.commitImport(csv, uncertain: [4: .keep]).importedCount == 2)
-    #expect(try ledger.transactions().count == 2)
+    #expect(try ledger.commitImport(csv, uncertain: [4: .keep]).importedCount == 3)
+    #expect(try ledger.transactions().count == 3)
 }
 
 @Test func theOwnerCanChooseAnotherReportingDateColumn() throws {
@@ -99,38 +99,38 @@ import Testing
     """
     do {
         let ledger = try Ledger.open(at: url)
-        let amazon = try recordEntry(ledger, cents: 500, kind: .expense, counterparty: "Amazon", date: "2026-03-01", category: "Supermarket")
-        try ledger.confirmAlias("AMZN MKTP", of: amazon.counterparty.id)
+        let amazon = try recordEntry(ledger, cents: 500, kind: .expense, payee: "Amazon", date: "2026-03-01", category: "Supermarket")
+        try ledger.confirmAlias("AMZN MKTP", of: amazon.payee!.id)
         let preview = try ledger.previewImport(csv)
         #expect(preview[0].proposedDefaultCategoryName == "Restaurant")
         #expect(preview[0].amountText == "-10.00")
         #expect(preview[1].proposedDefaultCategoryName == nil)
         #expect(preview[2].proposedDefaultCategoryName == nil)
         #expect(try ledger.commitImport(csv).importedCount == 3)
-        #expect(try ledger.defaultCategory(forCounterpartyName: "Cafe") == nil)
+        #expect(try ledger.defaultCategory(forPayeeName: "Cafe") == nil)
         #expect(try ledger.proposedPayeeDefaults().map(\.payee) == ["Cafe"])
         #expect(try ledger.proposedPayeeDefaults().map(\.categoryName) == ["Restaurant"])
-        let cafeEntries = try ledger.transactions().filter { $0.counterparty.name == "Cafe" }
-        #expect(cafeEntries.map(\.category.name).sorted() == ["Restaurant", "Supermarket"])
-        #expect(cafeEntries.first { $0.category.name == "Restaurant" }?.categoryProvenance == .inherited)
-        #expect(cafeEntries.first { $0.category.name == "Supermarket" }?.categoryProvenance == .overridden)
+        let cafeEntries = try ledger.transactions().filter { $0.payee!.name == "Cafe" }
+        #expect(cafeEntries.compactMap(\.category?.name).sorted() == ["Restaurant", "Supermarket"])
+        #expect(cafeEntries.first { $0.category!.name == "Restaurant" }?.categoryProvenance == .inherited)
+        #expect(cafeEntries.first { $0.category!.name == "Supermarket" }?.categoryProvenance == .overridden)
         let aliasEntry = try ledger.transactions().first { $0.reportingDate.iso8601 == "2026-04-03" }
-        #expect(aliasEntry?.counterparty.id == amazon.counterparty.id)
-        #expect(aliasEntry?.counterparty.defaultCategory?.name == "Supermarket")
+        #expect(aliasEntry?.payee!.id == amazon.payee!.id)
+        #expect(aliasEntry?.payee!.defaultCategory?.name == "Supermarket")
     }
     let reopened = try Ledger.open(at: url)
-    #expect(try reopened.defaultCategory(forCounterpartyName: "Cafe") == nil)
+    #expect(try reopened.defaultCategory(forPayeeName: "Cafe") == nil)
     let proposal = try #require(try reopened.proposedPayeeDefaults().first)
     #expect(proposal.payee == "Cafe")
     #expect(proposal.categoryName == "Restaurant")
-    try reopened.acceptProposedPayeeDefault(for: proposal.counterpartyID)
-    #expect(try reopened.defaultCategory(forCounterpartyName: "Cafe")?.name == "Restaurant")
+    try reopened.acceptProposedPayeeDefault(for: proposal.payeeID)
+    #expect(try reopened.defaultCategory(forPayeeName: "Cafe")?.name == "Restaurant")
     #expect(try reopened.proposedPayeeDefaults().isEmpty)
     let hotel = try namedCategory(reopened, "Hotel")
-    try reopened.setDefaultCategory(hotel.id, for: proposal.counterpartyID)
-    let afterChange = try reopened.transactions().filter { $0.counterparty.name == "Cafe" }
-    #expect(afterChange.first { $0.categoryProvenance == .inherited }?.category.name == "Hotel")
-    #expect(afterChange.first { $0.categoryProvenance == .overridden }?.category.name == "Supermarket")
+    try reopened.setDefaultCategory(hotel.id, for: proposal.payeeID)
+    let afterChange = try reopened.transactions().filter { $0.payee!.name == "Cafe" }
+    #expect(afterChange.first { $0.categoryProvenance == .inherited }?.category!.name == "Hotel")
+    #expect(afterChange.first { $0.categoryProvenance == .overridden }?.category!.name == "Supermarket")
 }
 
 @Test func acceptingAProposedDefaultDuringCommitAppliesIt() throws {
@@ -140,6 +140,98 @@ import Testing
     2026-04-01T10:00:00+0200,-10.00,EUR,EUR,1.0,Cafe,Restaurant,Cash,
     """
     #expect(try ledger.commitImport(csv, acceptedPayees: ["Cafe"]).importedCount == 1)
-    #expect(try ledger.defaultCategory(forCounterpartyName: "Cafe")?.name == "Restaurant")
+    #expect(try ledger.defaultCategory(forPayeeName: "Cafe")?.name == "Restaurant")
     #expect(try ledger.proposedPayeeDefaults().isEmpty)
+}
+
+@Test func aRefundImportsAsIncomeIntoANewAccountWithoutChangingPreview() throws {
+    let ledger = try Ledger.openInMemory()
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-02T10:00:00+0100,100.00,EUR,EUR,1.0,Amazon,Shopping,New Bank,Refund
+    """
+    let preview = try ledger.previewImport(csv)
+    #expect(preview.first?.state == .ready)
+    #expect(try !ledger.accounts().contains { $0.name == "New Bank" })
+    #expect(try ledger.commitImport(csv).importedCount == 1)
+    let transaction = try #require(try ledger.transactions().first)
+    #expect(transaction.kind == .income)
+    #expect(transaction.amount == Cents(10000))
+    #expect(transaction.account.name == "New Bank")
+    #expect(try ledger.commitImport(csv).importedCount == 0)
+}
+
+@Test func importSummaryCountsReadyUncertainAndInvalidRows() throws {
+    let ledger = try Ledger.openInMemory()
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-02T10:00:00+0100,-10.00,EUR,EUR,1.0,Cafe,Restaurant,Cash,
+    2026-11-02T11:00:00+0100,-10.00,EUR,EUR,1.0,Cafe,Restaurant,Cash,
+    2026-11-03T10:00:00+0100,-20.00,INR,INR,90,Cafe,Restaurant,Cash,
+    """
+    let preview = try ledger.previewImport(csv)
+    #expect(preview.map(\.proposedDefaultCategoryName) == ["Restaurant", nil, nil])
+    let result = try ledger.commitImport(csv, uncertain: [1: .skip], acceptedPayees: ["Cafe"])
+    #expect(result.importedCount == 1)
+    #expect(result.skippedCount == 2)
+    #expect(try ledger.defaultCategory(forPayeeName: "Cafe")?.name == "Restaurant")
+    #expect(try ledger.proposedPayeeDefaults().isEmpty)
+}
+
+@Test func importRequiresAnAccountAndAPositiveMagnitude() throws {
+    let ledger = try Ledger.openInMemory()
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-02T10:00:00+0100,-10.00,EUR,EUR,1.0,Cafe,Restaurant,,
+    2026-11-02T11:00:00+0100,0.00,EUR,EUR,1.0,Cafe,Restaurant,Cash,
+    """
+    let preview = try ledger.previewImport(csv)
+    #expect(preview.allSatisfy { if case .needsCorrection = $0.state { true } else { false } })
+    let result = try ledger.commitImport(csv)
+    #expect(result.importedCount == 0)
+    #expect(result.skippedCount == 2)
+}
+
+@Test func malformedCSVIsRefusedWithAnActionableError() throws {
+    let ledger = try Ledger.openInMemory()
+    #expect(throws: LedgerError.self) { try ledger.previewImport("Date,Date\n2026-11-01,2026-11-02") }
+    #expect(throws: LedgerError.self) { try ledger.previewImport("Payee,Amount\nREWE,10.00") }
+    #expect(throws: LedgerError.self) { try ledger.previewImport("Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account\n2026-11-01,10.00") }
+    #expect(throws: LedgerError.self) { try ledger.previewImport("Date,Amount\n\"unterminated") }
+    #expect(try ledger.transactions().isEmpty)
+}
+
+@Test func quotedCSVFieldsKeepEscapedQuotesAndCommas() throws {
+    let ledger = try Ledger.openInMemory()
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-01,-10.00,EUR,EUR,1.0,"Cafe ""Berlin"", Mitte",Restaurant,Cash,"Coffee, cake"
+    """
+    let result = try ledger.commitImport(csv)
+    #expect(result.importedCount == 1)
+    let entry = try #require(try ledger.transactions().first)
+    #expect(entry.payee?.name == "Cafe \"Berlin\", Mitte")
+    #expect(entry.note == "Coffee, cake")
+}
+
+@Test func csvImportFlagsAliasedPayeeOnSameDayAndAmountAsUncertainMatch() throws {
+    let ledger = try Ledger.openInMemory()
+    let amazon = try recordEntry(ledger, cents: 4200, kind: .expense, payee: "Amazon", date: "2026-11-02", category: "Shopping")
+    let amazonID = try #require(amazon.payee?.id)
+    let aliasOnlyPayee = try ledger.record(EntryDraft(
+        amount: Cents(100),
+        kind: .expense,
+        payee: "AMZN MKTP",
+        reportingDate: ReportingDate(iso8601: "2026-11-01")!,
+        categoryID: try namedCategory(ledger, "Shopping").id,
+        accountID: try ledger.accounts().first!.id
+    ))
+    try ledger.mergePayees(sourceID: try #require(aliasOnlyPayee.payee?.id), into: amazonID)
+
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-02T14:00:00+0100,-42.00,EUR,EUR,1.0,AMZN MKTP,Shopping,Cash,
+    """
+    let preview = try ledger.previewImport(csv)
+    #expect(preview.first?.state == .uncertainMatch)
 }

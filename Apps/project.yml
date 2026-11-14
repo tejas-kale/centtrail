@@ -13,7 +13,7 @@ settings:
     DEVELOPMENT_TEAM: NDMG62GXZA
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "2"
+    CURRENT_PROJECT_VERSION: "3"
     PRODUCT_NAME: Centtrail
     PRODUCT_BUNDLE_IDENTIFIER: com.tejaskale.centtrail
     GENERATE_INFOPLIST_FILE: YES
@@ -34,6 +34,8 @@ targets:
     dependencies:
       - package: Centtrail
         product: CenttrailShell
+      - target: CenttrailControls
+        embed: true
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1"
@@ -43,6 +45,21 @@ targets:
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+    # The shell syncs the ledger through the CloudKit container named by
+    # CenttrailCloudKitContainer; without the key (swift run, tests) it stays local.
+    info:
+      path: iOS/Info.plist
+      properties:
+        CenttrailCloudKitContainer: iCloud.com.tejaskale.centtrail
+        NSMicrophoneUsageDescription: Speak an entry to fill the form on this device. Nothing is saved until you tap Save.
+        NSSpeechRecognitionUsageDescription: Transcribe your spoken entry on this device so you can review the fields before saving.
+        UIBackgroundModes: [remote-notification]
+    entitlements:
+      path: iOS/Centtrail.entitlements
+      properties:
+        aps-environment: development
+        com.apple.developer.icloud-services: [CloudKit]
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.tejaskale.centtrail]
   CenttrailMac:
     type: application
     platform: macOS
@@ -57,8 +74,42 @@ targets:
       base:
         ENABLE_HARDENED_RUNTIME: YES
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.finance
+    info:
+      path: macOS/Info.plist
+      properties:
+        CenttrailCloudKitContainer: iCloud.com.tejaskale.centtrail
+        NSMicrophoneUsageDescription: Speak an entry to fill the form on this device. Nothing is saved until you tap Save.
+        NSSpeechRecognitionUsageDescription: Transcribe your spoken entry on this device so you can review the fields before saving.
     entitlements:
       path: macOS/Centtrail.entitlements
       properties:
-        # The ledger lives in the sandbox container's Application Support; no other file or network access.
+        # The ledger lives in the sandbox container's Application Support; the only network use is iCloud sync.
         com.apple.security.app-sandbox: true
+        # iCloud sync of the ledger through CloudKit.
+        com.apple.security.network.client: true
+        com.apple.security.device.audio-input: true
+        com.apple.security.files.user-selected.read-only: true
+        com.apple.developer.aps-environment: development
+        com.apple.developer.icloud-services: [CloudKit]
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.tejaskale.centtrail]
+
+  CenttrailControls:
+    type: app-extension
+    platform: iOS
+    sources:
+      - iOSControls
+    dependencies:
+      - package: Centtrail
+        product: CenttrailShell
+    settings:
+      base:
+        PRODUCT_NAME: CenttrailControls
+        PRODUCT_BUNDLE_IDENTIFIER: com.tejaskale.centtrail.controls
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        INFOPLIST_KEY_CFBundleDisplayName: Centtrail
+    info:
+      path: iOSControls/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

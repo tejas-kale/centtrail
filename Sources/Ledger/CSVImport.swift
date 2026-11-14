@@ -47,28 +47,27 @@ public struct ImportRow: Equatable, Sendable, Identifiable {
 
 public struct ImportCommitResult: Equatable, Sendable {
     public let importedCount: Int
+    public let skippedCount: Int
 }
 
-public enum UncertainDecision: Equatable, Sendable {
+public enum UncertainDecision: Hashable, Sendable {
     case keep
     case skip
 }
 
 public struct ProposedPayeeDefault: Equatable, Sendable, Identifiable {
-    public let counterpartyID: Counterparty.ID
+    public let payeeID: Payee.ID
     public let payee: String
     public let categoryName: String
 
-    public var id: Counterparty.ID { counterpartyID }
+    public var id: Payee.ID { payeeID }
 
-    public init(counterpartyID: Counterparty.ID, payee: String, categoryName: String) {
-        self.counterpartyID = counterpartyID
+    public init(payeeID: Payee.ID, payee: String, categoryName: String) {
+        self.payeeID = payeeID
         self.payee = payee
         self.categoryName = categoryName
     }
 }
-
-private let incomeCategoryNames: Set<String> = ["Salary", "Kindergeld"]
 
 extension Ledger {
     public func previewImport(_ csv: String, mapping: ImportMapping = ImportMapping()) throws -> [ImportRow] {
@@ -99,12 +98,12 @@ extension Ledger {
         }
         for payee in acceptedPayees {
             let name = payee.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let id = try resolveCounterpartyID(named: name) else { continue }
+            guard let id = try resolvePayeeID(named: name) else { continue }
             if try proposedCategoryID(for: id) != nil {
-                try acceptProposedPayeeDefault(for: Counterparty.ID(rawValue: id))
+                try acceptProposedPayeeDefault(for: Payee.ID(rawValue: id))
             }
         }
-        return ImportCommitResult(importedCount: imported)
+        return ImportCommitResult(importedCount: imported, skippedCount: classified.count - imported)
     }
 
     private struct ClassifiedImport {
@@ -125,12 +124,25 @@ extension Ledger {
     }
 
     private func classifiedRows(_ csv: String, mapping: ImportMapping) throws -> [ClassifiedImport] {
-        let table = parseCSV(csv)
-        guard let header = table.first else { return [] }
+        let table = try parseCSV(csv)
+        guard let rawHeader = table.first else { return [] }
+        let header = rawHeader.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard !header.contains(""), Set(header).count == header.count else {
+            throw LedgerError(message: "The CSV has empty or duplicate column names. Export it again with one unique name per column.")
+        }
+        let required: Set<String> = ["Date", "Amount", "Payee", "Category", "Source Account", "Source Currency", "Target Currency", "Exchange Rate", mapping.reportingDateColumn]
+        let missing = required.subtracting(header).sorted()
+        guard missing.isEmpty else {
+            throw LedgerError(message: "The CSV is missing columns: \(missing.joined(separator: ", ")). Choose the original export file.")
+        }
         let records = table.dropFirst()
         let categories = try categories()
         var classified: [ClassifiedImport] = []
         for (offset, record) in records.enumerated() {
+            if record.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { continue }
+            guard record.count == header.count else {
+                throw LedgerError(message: "CSV row \(offset + 2) has \(record.count) fields; expected \(header.count). Fix the row or export the file again.")
+            }
             let fields = Dictionary(uniqueKeysWithValues: zip(header, record).map { ($0.0, $0.1) })
             let payee = fields["Payee"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let categoryName = fields["Category"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -159,10 +171,8 @@ extension Ledger {
             let category = categories.first { $0.name == categoryName }
             if category == nil { reasons.append("Unknown category \(categoryName).") }
             if payee.isEmpty { reasons.append("The payee is missing.") }
-            let isIncomeCategory = incomeCategoryNames.contains(categoryName)
-            if parsedAmount.sign > 0, category != nil, !isIncomeCategory {
-                reasons.append("A positive amount in an expense category is held until the refund and transfer format is confirmed.")
-            }
+            if sourceAccount.isEmpty { reasons.append("The source account is missing.") }
+            if parsedAmount.cents == 0 { reasons.append("The amount must be greater than zero.") }
             let kind: Kind = parsedAmount.sign < 0 ? .expense : .income
             let rowDate = reportingDate?.iso8601
             if !reasons.isEmpty || category == nil || reportingDate == nil {
@@ -188,7 +198,7 @@ extension Ledger {
             let draft = EntryDraft(
                 amount: Cents(parsedAmount.cents),
                 kind: kind,
-                counterparty: payee,
+                payee: payee,
                 reportingDate: fingerprint.reportingDate,
                 categoryID: category!.id,
                 note: fingerprint.note
@@ -241,11 +251,19 @@ extension Ledger {
             WHERE entry.trashed_on IS NULL
               AND entry.reporting_date = ?
               AND entry.amount_cents = ?
-              AND counterparty.name = ?
+              AND (
+                counterparty.name = ? COLLATE NOCASE
+                OR EXISTS (
+                  SELECT 1 FROM counterparty_alias
+                  WHERE counterparty_alias.counterparty_id = entry.counterparty_id
+                    AND counterparty_alias.name = ? COLLATE NOCASE
+                )
+              )
             """,
             bindings: [
                 .text(fingerprint.reportingDate.iso8601),
                 .integer(Int64(fingerprint.amountCents)),
+                .text(fingerprint.payee),
                 .text(fingerprint.payee),
             ]
         )
@@ -265,7 +283,7 @@ extension Ledger {
     private func proposedDefaultName(payee: String, categoryName: String, earlierInFile: [ClassifiedImport]) throws -> String? {
         guard !payee.isEmpty, !categoryName.isEmpty else { return nil }
         if earlierInFile.contains(where: { $0.fingerprint?.payee == payee }) { return nil }
-        if try resolveCounterpartyID(named: payee) != nil { return nil }
+        if try resolvePayeeID(named: payee) != nil { return nil }
         return categoryName
     }
 
@@ -275,7 +293,7 @@ extension Ledger {
             SELECT counterparty.id, counterparty.name, category.name
             FROM proposed_payee_default
             JOIN counterparty ON counterparty.id = proposed_payee_default.counterparty_id
-            JOIN category ON category.id = proposed_payee_default.category_id
+            JOIN effective_category AS category ON category.id = proposed_payee_default.category_id
             ORDER BY counterparty.name
             """
         )
@@ -287,19 +305,24 @@ extension Ledger {
             else {
                 throw LedgerError(message: "The ledger returned a proposed default it could not read.")
             }
-            return ProposedPayeeDefault(counterpartyID: Counterparty.ID(rawValue: id), payee: payee, categoryName: categoryName)
+            return ProposedPayeeDefault(payeeID: Payee.ID(rawValue: id), payee: payee, categoryName: categoryName)
         }
     }
 
-    public func acceptProposedPayeeDefault(for counterpartyID: Counterparty.ID) throws {
-        guard let categoryID = try proposedCategoryID(for: counterpartyID.rawValue) else {
+    public func acceptProposedPayeeDefault(for payeeID: Payee.ID) throws {
+        guard let categoryID = try proposedCategoryID(for: payeeID.rawValue) else {
             throw LedgerError(message: "That payee has no proposed default.")
         }
-        try setDefaultCategory(categoryID, for: counterpartyID)
+        try setDefaultCategory(categoryID, for: payeeID)
     }
 
     private func commit(_ item: ClassifiedImport) throws {
-        guard let draft = item.draft, let fingerprint = item.fingerprint else { return }
+        guard var draft = item.draft, let fingerprint = item.fingerprint else { return }
+        if let existing = try accounts().first(where: { $0.name.caseInsensitiveCompare(fingerprint.sourceAccount) == .orderedSame }) {
+            draft.accountID = existing.id
+        } else {
+            draft.accountID = try addAccount(name: fingerprint.sourceAccount).id
+        }
         let recorded = try record(draft, proposeDefaultForNewPayee: true)
         try connection.execute(
             """
@@ -328,49 +351,55 @@ extension Ledger {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let sign = trimmed.hasPrefix("-") ? -1 : 1
-        let digits = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "+-"))
-        let parts = digits.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 1 || parts.count == 2 else { return nil }
-        guard let euros = Int(parts[0]), parts[0].allSatisfy(\.isNumber) else { return nil }
-        let fraction: Int
-        if parts.count == 2 {
-            guard (1...2).contains(parts[1].count), parts[1].allSatisfy(\.isNumber), let parsed = Int(parts[1]) else { return nil }
-            fraction = parts[1].count == 1 ? parsed * 10 : parsed
-        } else {
-            fraction = 0
-        }
-        return (sign, euros * 100 + fraction)
+        let unsigned = trimmed.hasPrefix("-") || trimmed.hasPrefix("+") ? String(trimmed.dropFirst()) : trimmed
+        guard let amount = Cents(euroText: unsigned) else { return nil }
+        return (sign, amount.value)
     }
 }
 
-private func parseCSV(_ text: String) -> [[String]] {
+private func parseCSV(_ text: String) throws -> [[String]] {
     var rows: [[String]] = []
     var row: [String] = []
     var field = ""
     var inQuotes = false
-    var characters = text.makeIterator()
-    while let character = characters.next() {
+    var closedQuote = false
+    let characters = Array(text)
+    var index = 0
+    while index < characters.count {
+        let character = characters[index]
         if inQuotes {
             if character == "\"" {
-                inQuotes = false
-            } else {
-                field.append(character)
-            }
-        } else if character == "\"" {
-            inQuotes = true
+                if index + 1 < characters.count, characters[index + 1] == "\"" {
+                    field.append("\"")
+                    index += 1
+                } else {
+                    inQuotes = false
+                    closedQuote = true
+                }
+            } else { field.append(character) }
         } else if character == "," {
             row.append(field)
             field = ""
-        } else if character == "\n" {
+            closedQuote = false
+        } else if character == "\n" || character == "\r\n" {
             row.append(field)
             rows.append(row)
             row = []
             field = ""
-        } else if character != "\r" {
-            field.append(character)
-        }
+            closedQuote = false
+        } else if character == "\r" {
+            // Ignore standalone carriage returns from legacy line endings.
+        } else if character == "\"", field.isEmpty, !closedQuote {
+            inQuotes = true
+        } else if closedQuote || character == "\"" {
+            throw LedgerError(message: "The CSV has misplaced quotation marks. Export it again with standard CSV quoting.")
+        } else { field.append(character) }
+        index += 1
     }
-    if !field.isEmpty || !row.isEmpty {
+    guard !inQuotes else {
+        throw LedgerError(message: "The CSV ends inside a quoted field. Export the complete file again.")
+    }
+    if !field.isEmpty || !row.isEmpty || closedQuote {
         row.append(field)
         rows.append(row)
     }

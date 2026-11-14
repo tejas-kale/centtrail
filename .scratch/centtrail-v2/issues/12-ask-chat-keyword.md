@@ -4,7 +4,7 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] "Restaurants this month vs last month" returns a comparison card with both date ranges
 - [ ] A name matching two payees asks which one before running

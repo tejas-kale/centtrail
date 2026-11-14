@@ -5,13 +5,15 @@ func namedCategory(_ ledger: Ledger, _ name: String) throws -> Category {
     try #require(try ledger.categories().first { $0.name == name })
 }
 
-func recordEntry(_ ledger: Ledger, cents: Int, kind: Kind, counterparty: String, date: String, category name: String) throws -> Transaction {
+func recordEntry(_ ledger: Ledger, cents: Int, kind: Kind, payee: String, date: String, category name: String) throws -> Transaction {
     try ledger.record(EntryDraft(
         amount: Cents(cents),
         kind: kind,
-        counterparty: counterparty,
+        payee: payee,
         reportingDate: ReportingDate(iso8601: date),
-        categoryID: try namedCategory(ledger, name).id
+        categoryID: kind == .transfer ? nil : try namedCategory(ledger, name).id,
+        accountID: try ledger.accounts()[0].id,
+        destinationAccountID: kind == .transfer ? try ledger.accounts()[3].id : nil
     ))
 }
 

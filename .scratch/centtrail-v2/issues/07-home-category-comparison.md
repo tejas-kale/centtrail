@@ -4,7 +4,7 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Categories are ordered by this month's spending; last month's same-days figure shows beside each
 - [ ] A category with spending only last month still appears with zero this month

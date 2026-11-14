@@ -4,9 +4,11 @@
 
 **Blocked by:** 06, 13
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Speaking a sentence fills the mentioned fields and leaves the rest as defaults
 - [ ] With Apple Intelligence off, the mic still fills amount, payee and date
 - [ ] Microphone and speech permissions are requested with a clear reason; denial shows a message
-- [ ] Interpreter capture tests cover account and payee extraction with the fake model and the fallback
+- [x] Interpreter capture tests cover account and payee extraction with the fake model and the fallback
+
+Implementation and deterministic Interpreter checks are complete. Physical microphone, permission prompts and on-device recognition still need the manual checks in `docs/platform-feasibility.md`.
