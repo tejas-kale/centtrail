@@ -4,9 +4,9 @@
 
 **Blocked by:** 06
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Chips show the top eight payees by entry count for the selected kind
-- [ ] Tapping a chip fills payee, category and last-used account; the amount field takes focus
-- [ ] Chips are hidden in Transfer mode
-- [ ] A Ledger frequent-payees capability is tested for ordering, ties and last-used account
+- [x] Chips show the top eight payees by entry count for the selected kind
+- [x] Tapping a chip fills payee, category and last-used account; the amount field takes focus
+- [x] Chips are hidden in Transfer mode
+- [x] A Ledger frequent-payees capability is tested for ordering, ties and last-used account

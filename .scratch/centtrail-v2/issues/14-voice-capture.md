@@ -4,7 +4,7 @@
 
 **Blocked by:** 06, 13
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 - [ ] Speaking a sentence fills the mentioned fields and leaves the rest as defaults
 - [ ] With Apple Intelligence off, the mic still fills amount, payee and date
