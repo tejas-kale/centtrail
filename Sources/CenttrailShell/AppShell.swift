@@ -27,7 +27,7 @@ struct HomeScreen: View {
                 }
 
                 if let summary = model.homeSummary {
-                    if summary.currentSpendingCents == 0 {
+                    if summary.currentSpendingCents == 0 && summary.categories.isEmpty {
                         Section {
                             ContentUnavailableView {
                                 Label("No spending this month", systemImage: "eurosign.circle")
@@ -307,7 +307,7 @@ struct AddEntrySheet: View {
             model.payees
                 .filter {
                     $0.name.localizedCaseInsensitiveContains(query)
-                        && $0.name.caseInsensitiveCompare(query) != .orderedSame
+                        && $0.name != query
                 }
                 .prefix(5)
         )
@@ -559,7 +559,6 @@ struct SettingsScreen: View {
 struct CategoriesScreen: View {
     @ObservedObject var model: CaptureModel
     @State private var newName = ""
-    @State private var countsAsSpending = true
     @State private var renamingCategory: LedgerCategory?
     @State private var renameText = ""
     @State private var message: String?
@@ -574,7 +573,6 @@ struct CategoriesScreen: View {
             }
             Section("Add category") {
                 TextField("Category name", text: $newName)
-                Toggle("Counts as spending", isOn: $countsAsSpending)
                 Button("Add category", action: addCategory)
             }
             Section("Categories") {
@@ -628,11 +626,10 @@ struct CategoriesScreen: View {
 
     private func addCategory() {
         do {
-            _ = try model.ledger.addCategory(name: newName, countsAsSpending: countsAsSpending)
+            _ = try model.ledger.addCategory(name: newName, countsAsSpending: true)
             newName = ""
-            countsAsSpending = true
             message = nil
-            try model.reloadFromOutside()
+            try model.reload()
         } catch {
             message = error.localizedDescription
         }
@@ -643,7 +640,7 @@ struct CategoriesScreen: View {
             _ = try model.ledger.renameCategory(id: category.id, to: renameText)
             renamingCategory = nil
             message = nil
-            try model.reloadFromOutside()
+            try model.reload()
         } catch {
             renamingCategory = nil
             message = error.localizedDescription
@@ -654,7 +651,7 @@ struct CategoriesScreen: View {
         do {
             try model.ledger.removeCategory(id: category.id)
             message = nil
-            try model.reloadFromOutside()
+            try model.reload()
         } catch {
             message = error.localizedDescription
         }
@@ -662,7 +659,7 @@ struct CategoriesScreen: View {
 
     private func reload() {
         do {
-            try model.reloadFromOutside()
+            try model.reload()
             message = nil
         } catch {
             message = error.localizedDescription
@@ -759,7 +756,7 @@ struct PayeesScreen: View {
     private func reload() {
         do {
             payees = try model.ledger.payees()
-            try model.reloadFromOutside()
+            try model.reload()
             message = nil
         } catch {
             message = error.localizedDescription
@@ -822,7 +819,7 @@ struct TrashScreen: View {
     private func reload() {
         do {
             entries = try model.ledger.trashedEntries(today: model.today)
-            try model.reloadFromOutside()
+            try model.reload()
             message = nil
         } catch {
             message = error.localizedDescription

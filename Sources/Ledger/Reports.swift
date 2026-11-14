@@ -49,7 +49,7 @@ extension Ledger {
         }
     }
 
-    func resolvedRange(_ range: DateRange?, today: ReportingDate) -> DateRange {
+    public func resolvedRange(_ range: DateRange?, today: ReportingDate) -> DateRange {
         if let range { return range }
         let start = ReportingDate(year: today.year, month: today.month, day: 1)!
         let last = ReportingDate.dayCount(month: today.month, year: today.year)
@@ -275,9 +275,15 @@ extension Ledger {
     }
 
     func matchingTransactions(_ query: ReportQuery, today: ReportingDate) throws -> [Transaction] {
+        _ = today
+        let measureClause = switch query.measure {
+        case .spending: "entry.kind = 'expense' AND entry_category.counts_as_spending = 1"
+        case .income: "entry.kind = 'income'"
+        }
         var sql = """
         \(entrySelectSQL)
         WHERE entry.trashed_on IS NULL
+          AND \(measureClause)
         """
         var bindings: [SQLiteValue] = []
         if let range = query.range {
@@ -285,7 +291,6 @@ extension Ledger {
             bindings.append(.text(range.start.iso8601))
             bindings.append(.text(range.end.iso8601))
         }
-        _ = today
         appendFilters(&sql, bindings: &bindings, categoryID: query.categoryID, payeeName: query.payeeName, amount: query.amount)
         sql += " ORDER BY entry.reporting_date DESC, entry.rowid DESC"
         return try connection.query(sql, bindings: bindings).map(decodeTransaction)

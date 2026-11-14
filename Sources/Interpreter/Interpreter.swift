@@ -84,14 +84,45 @@ public extension LanguageModelBackend {
     }
 }
 
-/// Deterministic keyword-based backend used when an on-device language model is not used.
-public struct KeywordLanguageModelBackend: LanguageModelBackend {
-    public let modelUnavailableReason: ModelUnavailableReason?
-
+enum InterpreterQueryHelpers {
     private static let mutationVerbs: Set<String> = [
         "add", "record", "delete", "remove", "trash", "restore",
         "edit", "change", "update", "rename", "merge", "import",
     ]
+
+    static func containsMutationVerb(in text: String) -> Bool {
+        let tokens = text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        return tokens.contains { mutationVerbs.contains($0) }
+    }
+
+    static func matchingKnownNames<T>(
+        from items: [T],
+        question: String,
+        nameOf: (T) -> String
+    ) -> [T] {
+        let lowerQuestion = question.lowercased()
+        let questionTokens = lowerQuestion.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        let hits = items.filter { item in
+            let lowerName = nameOf(item).lowercased()
+            if lowerQuestion.contains(lowerName) { return true }
+            return questionTokens.contains { token in lowerName == token || lowerName.hasPrefix(token + " ") }
+        }
+        return hits.filter { candidate in
+            let candidateLower = nameOf(candidate).lowercased()
+            return !hits.contains { other in
+                let otherName = nameOf(other)
+                let otherLower = otherName.lowercased()
+                return otherName.count > nameOf(candidate).count
+                    && lowerQuestion.contains(otherLower)
+                    && otherLower.contains(candidateLower)
+            }
+        }
+    }
+}
+
+/// Deterministic keyword-based backend used when an on-device language model is not used.
+public struct KeywordLanguageModelBackend: LanguageModelBackend {
+    public let modelUnavailableReason: ModelUnavailableReason?
 
     public init(modelUnavailableReason: ModelUnavailableReason? = .modelNotReady) {
         self.modelUnavailableReason = modelUnavailableReason
@@ -106,11 +137,10 @@ public struct KeywordLanguageModelBackend: LanguageModelBackend {
         guard !folded.isEmpty else {
             return .unsupported(Interpreter.supportedExplanation)
         }
-        let lower = folded.lowercased()
-        let tokens = lower.split { !$0.isLetter && !$0.isNumber }.map(String.init)
-        if tokens.contains(where: { Self.mutationVerbs.contains($0) }) {
+        if InterpreterQueryHelpers.containsMutationVerb(in: folded) {
             return .unsupported("Ask is read-only and cannot change your data. \(Interpreter.supportedExplanation)")
         }
+        let lower = folded.lowercased()
 
         let names = knownNames(from: context)
         let kept: [KnownName]
@@ -118,18 +148,7 @@ public struct KeywordLanguageModelBackend: LanguageModelBackend {
             let target = resolvedName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             kept = names.filter { $0.name.lowercased() == target }
         } else {
-            let hits = names.filter { known in
-                let name = known.name.lowercased()
-                if lower.contains(name) { return true }
-                return tokens.contains { token in name == token || name.hasPrefix(token + " ") }
-            }
-            kept = hits.filter { candidate in
-                !hits.contains { other in
-                    other.name.count > candidate.name.count
-                        && lower.contains(other.name.lowercased())
-                        && other.name.lowercased().contains(candidate.name.lowercased())
-                }
-            }
+            kept = InterpreterQueryHelpers.matchingKnownNames(from: names, question: folded, nameOf: \.name)
             if Set(kept.map { $0.name.lowercased() }).count > 1 {
                 let uniqueNames = Set(kept.map(\.name))
                 return .clarification(uniqueNames.sorted())

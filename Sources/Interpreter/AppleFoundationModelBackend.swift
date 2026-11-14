@@ -144,11 +144,6 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
     public typealias ReportGenerator = @Sendable (String, InterpretationContext) async throws -> GeneratedReportIntent
     public typealias CaptureGenerator = @Sendable (String, InterpretationContext) async throws -> GeneratedCaptureDraft
 
-    private static let mutationVerbs: Set<String> = [
-        "add", "record", "delete", "remove", "trash", "restore",
-        "edit", "change", "update", "rename", "merge", "import",
-    ]
-
     private let availabilityProvider: AvailabilityProvider
     private let reportGenerator: ReportGenerator?
     private let captureGenerator: CaptureGenerator?
@@ -213,8 +208,7 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
             return .unsupported(Interpreter.supportedExplanation)
         }
 
-        let tokens = trimmed.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
-        if tokens.contains(where: { Self.mutationVerbs.contains($0) }) {
+        if InterpreterQueryHelpers.containsMutationVerb(in: trimmed) {
             return .unsupported("Ask is read-only and cannot change your data. \(Interpreter.supportedExplanation)")
         }
 
@@ -464,21 +458,12 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
 
         // Check if the question itself contains an ambiguous prefix/token matching multiple known names
         // (e.g., "Amazon" when both "Amazon" and "Amazon Fresh" exist and the user didn't say "Amazon Fresh").
-        let lowerQuestion = question.lowercased()
-        let questionTokens = lowerQuestion.split { !$0.isLetter && !$0.isNumber }.map(String.init)
         let allKnownNames = context.categories.map(\.name) + context.payees.map(\.name) + context.aliasNames
-        let hits = allKnownNames.filter { name in
-            let lowerName = name.lowercased()
-            if lowerQuestion.contains(lowerName) { return true }
-            return questionTokens.contains { token in lowerName == token || lowerName.hasPrefix(token + " ") }
-        }
-        let prunedHits = hits.filter { candidate in
-            !hits.contains { other in
-                other.count > candidate.count
-                    && lowerQuestion.contains(other.lowercased())
-                    && other.lowercased().contains(candidate.lowercased())
-            }
-        }
+        let prunedHits = InterpreterQueryHelpers.matchingKnownNames(
+            from: allKnownNames,
+            question: question,
+            nameOf: { $0 }
+        )
         let uniquePruned = Array(Set(prunedHits)).sorted()
         if uniquePruned.count > 1 {
             return .clarification(uniquePruned)

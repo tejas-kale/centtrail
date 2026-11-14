@@ -213,3 +213,25 @@ import Testing
     #expect(entry.payee?.name == "Cafe \"Berlin\", Mitte")
     #expect(entry.note == "Coffee, cake")
 }
+
+@Test func csvImportFlagsAliasedPayeeOnSameDayAndAmountAsUncertainMatch() throws {
+    let ledger = try Ledger.openInMemory()
+    let amazon = try recordEntry(ledger, cents: 4200, kind: .expense, payee: "Amazon", date: "2026-11-02", category: "Shopping")
+    let amazonID = try #require(amazon.payee?.id)
+    let aliasOnlyPayee = try ledger.record(EntryDraft(
+        amount: Cents(100),
+        kind: .expense,
+        payee: "AMZN MKTP",
+        reportingDate: ReportingDate(iso8601: "2026-11-01")!,
+        categoryID: try namedCategory(ledger, "Shopping").id,
+        accountID: try ledger.accounts().first!.id
+    ))
+    try ledger.mergePayees(sourceID: try #require(aliasOnlyPayee.payee?.id), into: amazonID)
+
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-02T14:00:00+0100,-42.00,EUR,EUR,1.0,AMZN MKTP,Shopping,Cash,
+    """
+    let preview = try ledger.previewImport(csv)
+    #expect(preview.first?.state == .uncertainMatch)
+}

@@ -145,7 +145,7 @@ struct ImportScreen: View {
                 mapping: ImportMapping(reportingDateColumn: dateColumn),
                 uncertain: decisions, acceptedPayees: acceptedPayees)
             acceptedPayees = []
-            try model.reloadFromOutside()
+            try model.reload()
             try refreshPreview()
             message = "\(result.importedCount) imported, \(result.skippedCount) skipped"
             isError = false
@@ -158,7 +158,7 @@ struct ImportScreen: View {
     private func accept(_ proposal: ProposedPayeeDefault) {
         do {
             try model.ledger.acceptProposedPayeeDefault(for: proposal.payeeID)
-            try model.reloadFromOutside()
+            try model.reload()
             try refreshPreview()
             message = "Default accepted for \(proposal.payee)."
             isError = false

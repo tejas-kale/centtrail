@@ -25,7 +25,7 @@ struct CategoryRecord: Identifiable, Sendable {
 }
 
 @Table("counterparty")
-struct CounterpartyRecord: Identifiable, Sendable {
+struct PayeeRecord: Identifiable, Sendable {
     let id: UUID
     var name: String = ""
     @Column("default_category_id")
@@ -39,7 +39,7 @@ struct EntryRecord: Identifiable, Sendable {
     var amountCents: Int = 0
     var kind: String = "expense"
     @Column("counterparty_id")
-    var counterpartyID: UUID?
+    var payeeID: UUID?
     @Column("account_id")
     var accountID: UUID?
     @Column("destination_account_id")
@@ -56,11 +56,11 @@ struct EntryRecord: Identifiable, Sendable {
 }
 
 @Table("counterparty_alias")
-struct CounterpartyAliasRecord: Identifiable, Sendable {
+struct PayeeAliasRecord: Identifiable, Sendable {
     let id: UUID
     var name: String = ""
     @Column("counterparty_id")
-    var counterpartyID: UUID
+    var payeeID: UUID
 }
 
 @Table("import_row")
@@ -80,11 +80,11 @@ struct ImportRowRecord: Identifiable, Sendable {
 @Table("proposed_payee_default")
 struct ProposedPayeeDefaultRecord: Identifiable, Sendable {
     @Column("counterparty_id", primaryKey: true)
-    let counterpartyID: UUID
+    let payeeID: UUID
     @Column("category_id")
     var categoryID: UUID
 
-    var id: UUID { counterpartyID }
+    var id: UUID { payeeID }
 }
 
 private final class DatabaseBox: @unchecked Sendable {
@@ -181,7 +181,6 @@ final class SQLiteConnection {
                     id TEXT PRIMARY KEY NOT NULL ON CONFLICT REPLACE DEFAULT (uuid()),
                     name TEXT NOT NULL DEFAULT ''
                 ) STRICT;
-                CREATE TABLE ledger_initialization (key TEXT PRIMARY KEY NOT NULL) STRICT;
                 """)
         }
         migrator.registerMigration("v2_entry_accounts") { db in
@@ -234,6 +233,9 @@ final class SQLiteConnection {
                     FROM account LEFT JOIN reference_customization AS custom ON custom.id = account.id;
                 """)
         }
+        migrator.registerMigration("v2_drop_ledger_initialization") { db in
+            try db.execute(sql: "DROP TABLE IF EXISTS ledger_initialization")
+        }
         try migrator.migrate(database)
 
         switch syncMode {
@@ -253,9 +255,9 @@ final class SQLiteConnection {
             tables: CategoryRecord.self,
             AccountRecord.self,
             ReferenceCustomizationRecord.self,
-            CounterpartyRecord.self,
+            PayeeRecord.self,
             EntryRecord.self,
-            CounterpartyAliasRecord.self,
+            PayeeAliasRecord.self,
             ImportRowRecord.self,
             ProposedPayeeDefaultRecord.self,
             containerIdentifier: containerIdentifier

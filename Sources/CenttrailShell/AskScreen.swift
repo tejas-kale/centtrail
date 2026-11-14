@@ -151,7 +151,7 @@ public final class AskModel: ObservableObject {
     private func handleInterpretation(_ interpretation: ReportInterpretation, question: String) {
         switch interpretation {
         case .operation(let operation):
-            execute(operation)
+            execute(operation, biggestExpensesOnly: question.localizedCaseInsensitiveContains("biggest"))
         case .clarification(let options):
             messages.append(AskMessage(
                 role: .assistant,
@@ -285,10 +285,7 @@ public final class AskModel: ObservableObject {
     }
 
     private func currentMonthRange() -> DateRange {
-        let start = ReportingDate(year: today.year, month: today.month, day: 1)!
-        let last = ReportingDate.dayCount(month: today.month, year: today.year)
-        let end = ReportingDate(year: today.year, month: today.month, day: last)!
-        return DateRange(start: start, end: end)
+        ledger.resolvedRange(nil, today: today)
     }
 }
 

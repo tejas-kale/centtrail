@@ -48,7 +48,7 @@ struct AccountsScreen: View {
     }
 
     private func perform(_ action: () throws -> Void) {
-        do { try action(); try model.reloadFromOutside(); message = nil }
+        do { try action(); try model.reload(); message = nil }
         catch { message = error.localizedDescription }
     }
 }

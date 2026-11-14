@@ -202,3 +202,41 @@ import Testing
     let restaurant = try namedCategory(ledger, "Restaurant")
     #expect(typed.draft.categoryID == restaurant.id)
 }
+
+@Test func searchReportRespectsMeasure() throws {
+    let ledger = try Ledger.openInMemory()
+    let cash = try ledger.accounts().first!
+    let checking = try ledger.addAccount(name: "Checking")
+    _ = try recordEntry(ledger, cents: 6000, kind: .expense, payee: "REWE", date: "2026-04-05", category: "Supermarket")
+    _ = try recordEntry(ledger, cents: 9000, kind: .income, payee: "Acme", date: "2026-04-06", category: "Salary")
+    _ = try recordEntry(ledger, cents: 8000, kind: .expense, payee: "Vanguard", date: "2026-04-07", category: "Savings")
+    _ = try ledger.record(EntryDraft(
+        amount: Cents(7000),
+        kind: .transfer,
+        payee: nil,
+        reportingDate: ReportingDate(iso8601: "2026-04-08")!,
+        accountID: checking.id,
+        destinationAccountID: cash.id
+    ))
+
+    let today = try #require(ReportingDate(iso8601: "2026-04-10"))
+    guard case .transactions(let spendingRows) = try ledger.runReport(.search(ReportQuery(measure: .spending)), today: today) else {
+        Issue.record("Expected spending transactions")
+        return
+    }
+    #expect(spendingRows.map(\.payee?.name) == ["REWE"])
+
+    guard case .transactions(let incomeRows) = try ledger.runReport(.search(ReportQuery(measure: .income)), today: today) else {
+        Issue.record("Expected income transactions")
+        return
+    }
+    #expect(incomeRows.map(\.payee?.name) == ["Acme"])
+}
+
+@Test func payeeLookupIsCaseInsensitiveWithoutCreatingDuplicates() throws {
+    let ledger = try Ledger.openInMemory()
+    _ = try recordEntry(ledger, cents: 1500, kind: .expense, payee: "REWE", date: "2026-04-01", category: "Supermarket")
+    _ = try recordEntry(ledger, cents: 2500, kind: .expense, payee: "rewe", date: "2026-04-02", category: "Supermarket")
+    let payees = try ledger.payees()
+    #expect(payees.filter { $0.name.caseInsensitiveCompare("REWE") == .orderedSame }.count == 1)
+}

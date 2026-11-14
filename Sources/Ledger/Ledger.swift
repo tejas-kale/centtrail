@@ -212,14 +212,14 @@ public final class Ledger {
 
     func resolvePayeeID(named name: String) throws -> UUID? {
         let alias = try connection.query(
-            "SELECT counterparty_id FROM counterparty_alias WHERE name = ? ORDER BY id LIMIT 1",
+            "SELECT counterparty_id FROM counterparty_alias WHERE name = ? COLLATE NOCASE ORDER BY id LIMIT 1",
             bindings: [.text(name)]
         )
         if let idText = alias.first?.first?.text, let id = UUID(uuidString: idText) {
             return id
         }
         let existing = try connection.query(
-            "SELECT id FROM counterparty WHERE name = ? ORDER BY id LIMIT 1",
+            "SELECT id FROM counterparty WHERE name = ? COLLATE NOCASE ORDER BY id LIMIT 1",
             bindings: [.text(name)]
         )
         if let idText = existing.first?.first?.text, let id = UUID(uuidString: idText) {

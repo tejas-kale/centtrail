@@ -81,7 +81,7 @@ final class CaptureModel: ObservableObject {
     func openEditSheet(_ transaction: LedgerTransaction) {
         clearDraft()
         editingEntryID = transaction.id
-        amountText = "\(transaction.amount.value / 100).\(String(format: "%02d", transaction.amount.value % 100))"
+        amountText = Self.formatAmountInput(transaction.amount)
         kind = transaction.kind
         payee = transaction.payee?.name ?? ""
         selectedDate = Self.date(from: transaction.reportingDate)
@@ -206,7 +206,7 @@ final class CaptureModel: ObservableObject {
             guard speechInterpretationID == id else { return }
             let draft = interpretation.draft
             if let amount = draft.amount {
-                amountText = "\(amount.value / 100).\(String(format: "%02d", amount.value % 100))"
+                amountText = Self.formatAmountInput(amount)
             }
             if let kind = draft.kind { self.kind = kind }
             if let payee = draft.payee { self.payee = payee }
@@ -236,14 +236,8 @@ final class CaptureModel: ObservableObject {
         }
     }
 
-    func updateCategory(_ newCategoryID: LedgerCategoryID, for transactionID: LedgerTransaction.ID) {
-        do {
-            try ledger.setCategory(newCategoryID, for: transactionID)
-            try reload()
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+    private static func formatAmountInput(_ amount: Cents) -> String {
+        "\(amount.value / 100).\(String(format: "%02d", amount.value % 100))"
     }
 
     private func scheduleReload() {
@@ -259,11 +253,7 @@ final class CaptureModel: ObservableObject {
         }
     }
 
-    func reloadFromOutside() throws {
-        try reload()
-    }
-
-    private func reload() throws {
+    func reload() throws {
         try ledger.purgeExpiredTrash(today: today)
         accounts = try ledger.accounts()
         categories = try ledger.categories()
@@ -385,24 +375,20 @@ func formatPercentageChange(_ percentage: Double) -> String {
     return "\(sign)\(percentage.formatted(.number.precision(.fractionLength(0...1))))%"
 }
 
+private let fullMonthNames = [
+    "",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
+
 func monthTitle(_ date: ReportingDate) -> String {
-    let names = [
-        "",
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December",
-    ]
-    guard names.indices.contains(date.month) else { return date.iso8601 }
-    return "\(names[date.month]) \(date.year)"
+    guard fullMonthNames.indices.contains(date.month) else { return date.iso8601 }
+    return "\(monthName(date)) \(date.year)"
 }
 
 func monthName(_ date: ReportingDate) -> String {
-    let names = [
-        "",
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December",
-    ]
-    guard names.indices.contains(date.month) else { return date.iso8601 }
-    return names[date.month]
+    guard fullMonthNames.indices.contains(date.month) else { return date.iso8601 }
+    return fullMonthNames[date.month]
 }
 
 func shortRangeLabel(_ range: DateRange) -> String {

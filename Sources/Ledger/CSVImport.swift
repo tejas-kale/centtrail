@@ -251,11 +251,19 @@ extension Ledger {
             WHERE entry.trashed_on IS NULL
               AND entry.reporting_date = ?
               AND entry.amount_cents = ?
-              AND counterparty.name = ?
+              AND (
+                counterparty.name = ? COLLATE NOCASE
+                OR EXISTS (
+                  SELECT 1 FROM counterparty_alias
+                  WHERE counterparty_alias.counterparty_id = entry.counterparty_id
+                    AND counterparty_alias.name = ? COLLATE NOCASE
+                )
+              )
             """,
             bindings: [
                 .text(fingerprint.reportingDate.iso8601),
                 .integer(Int64(fingerprint.amountCents)),
+                .text(fingerprint.payee),
                 .text(fingerprint.payee),
             ]
         )
