@@ -1,3 +1,4 @@
+import Charts
 import Ledger
 import SwiftUI
 
@@ -26,8 +27,34 @@ struct HomeScreen: View {
                 }
 
                 if let summary = model.homeSummary {
-                    Section {
-                        HomeSummaryCard(summary: summary, today: model.today)
+                    if summary.currentSpendingCents == 0 {
+                        Section {
+                            ContentUnavailableView {
+                                Label("No spending this month", systemImage: "eurosign.circle")
+                            } description: {
+                                Text("Add an expense to compare \(monthTitle(model.today)) with \(monthName(summary.previousFullMonthRange.start)).")
+                            } actions: {
+                                Button("Add transaction") {
+                                    model.openAddSheet()
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                        }
+                    } else {
+                        Section {
+                            HomeSummaryCard(summary: summary, today: model.today)
+                        }
+
+                        if !summary.categories.isEmpty {
+                            Section("Categories") {
+                                HomeCategoryComparisonChart(categories: summary.categories)
+                                ForEach(summary.categories) { item in
+                                    HomeCategoryComparisonRow(item: item)
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -122,6 +149,89 @@ private struct HomeSummaryCard: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct HomeCategoryComparisonChart: View {
+    let categories: [CategorySummary]
+
+    private struct BarEntry: Identifiable {
+        let id: String
+        let categoryName: String
+        let period: String
+        let euros: Double
+    }
+
+    private var bars: [BarEntry] {
+        categories.flatMap { item in
+            [
+                BarEntry(
+                    id: "\(item.id.rawValue)-current",
+                    categoryName: item.category.name,
+                    period: "This month",
+                    euros: Double(item.currentCents) / 100.0
+                ),
+                BarEntry(
+                    id: "\(item.id.rawValue)-previous",
+                    categoryName: item.category.name,
+                    period: "Last month",
+                    euros: Double(item.previousSameDaysCents) / 100.0
+                ),
+            ]
+        }
+    }
+
+    var body: some View {
+        Chart(bars) { bar in
+            BarMark(
+                x: .value("Spending", bar.euros),
+                y: .value("Category", bar.categoryName)
+            )
+            .position(by: .value("Period", bar.period))
+            .foregroundStyle(by: .value("Period", bar.period))
+            .cornerRadius(4)
+        }
+        .chartForegroundStyleScale([
+            "This month": Color.accentColor,
+            "Last month": Color.secondary.opacity(0.45),
+        ])
+        .chartLegend(position: .top, alignment: .leading)
+        .chartXAxis {
+            AxisMarks(position: .bottom) { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    if let euros = value.as(Double.self) {
+                        Text(euros.formatted(.currency(code: "EUR").precision(.fractionLength(0))))
+                    }
+                }
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading)
+        }
+        .frame(height: CGFloat(max(categories.count, 1)) * 46 + 28)
+        .padding(.vertical, 4)
+    }
+}
+
+private struct HomeCategoryComparisonRow: View {
+    let item: CategorySummary
+
+    var body: some View {
+        HStack {
+            Text(item.category.name)
+                .lineLimit(1)
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(formatEuro(item.currentCents))
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+                Text("Last month: \(formatEuro(item.previousSameDaysCents))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        }
     }
 }
 
