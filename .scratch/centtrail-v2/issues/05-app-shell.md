@@ -4,7 +4,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] The five old tabs and the sentence box are gone
 - [ ] On 13 November, Home compares 1–13 Nov with 1–13 Oct and shows the change as amount and percentage (no percentage when October is zero)

@@ -4,7 +4,7 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Changing Amazon's default from Supermarket to Shopping moves inherited past entries but not overridden ones
 - [ ] Merging "AMZN MKTP" into "Amazon" moves its transactions and keeps the name as an alias

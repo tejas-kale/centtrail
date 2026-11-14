@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] The Ledger and Interpreter public APIs say Payee wherever they said counterparty, vendor or payer
 - [ ] Payee aliases keep working under the new name
