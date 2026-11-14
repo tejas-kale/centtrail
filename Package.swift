@@ -14,11 +14,14 @@ let package = Package(
         .library(name: "CenttrailShell", targets: ["CenttrailShell"]),
         .executable(name: "Centtrail", targets: ["CenttrailMac"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/pointfreeco/sqlite-data", from: "1.9.0"),
+    ],
     targets: [
         .target(
             name: "Ledger",
-            linkerSettings: [
-                .linkedLibrary("sqlite3"),
+            dependencies: [
+                .product(name: "SQLiteData", package: "sqlite-data"),
             ]
         ),
         .target(

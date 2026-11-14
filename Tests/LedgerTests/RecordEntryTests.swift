@@ -40,7 +40,7 @@ import Testing
     let otherCategoryIDs = try other.categories().map(\.id)
     #expect(categoryIDs == rereadCategoryIDs)
     #expect(Set(categoryIDs).count == categoryIDs.count)
-    #expect(Set(categoryIDs).isDisjoint(with: otherCategoryIDs))
+    #expect(categoryIDs == otherCategoryIDs)
 }
 
 @Test func theSamePayeeNameIsOnePayee() throws {
