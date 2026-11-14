@@ -49,5 +49,15 @@ let package = Package(
                 ]),
             ]
         ),
+        .testTarget(
+            name: "CenttrailShellTests",
+            dependencies: ["CenttrailShell", "Ledger"],
+            swiftSettings: [
+                .unsafeFlags([
+                    "-load-plugin-library",
+                    "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib",
+                ]),
+            ]
+        ),
     ]
 )
