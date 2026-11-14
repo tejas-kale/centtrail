@@ -236,3 +236,41 @@ private struct FakeLanguageModelBackend: LanguageModelBackend {
     #expect(searchRange.end.iso8601 == "2026-04-30")
     #expect(txs.map(\.payee!.name) == ["Middle Eats"])
 }
+
+@Test @MainActor func askModelFollowUpKeepsPreviousPeriodAndGrouping() throws {
+    let ledger = try Ledger.openInMemory()
+    _ = try recordEntry(ledger, cents: 4000, kind: .expense, payee: "Middle Eats", date: "2026-02-05", category: "Restaurant")
+    _ = try recordEntry(ledger, cents: 1500, kind: .expense, payee: "Middle Eats", date: "2026-04-05", category: "Restaurant")
+    _ = try recordEntry(ledger, cents: 999, kind: .expense, payee: "JetBrains", date: "2026-03-01", category: "Shopping")
+    let today = try #require(ReportingDate(iso8601: "2026-04-10"))
+
+    let interpreter = Interpreter(ledger: ledger, today: today, backend: KeywordLanguageModelBackend())
+    let ask = AskModel(ledger: ledger, today: today, interpreter: interpreter)
+
+    ask.inputText = "How much did I spend on restaurants this year per month"
+    ask.submitInput()
+    guard case .answer(_, .breakdown(let rows, .month, let range)) = ask.messages.last?.content else {
+        Issue.record("Expected monthly breakdown")
+        return
+    }
+    #expect(range.start.iso8601 == "2026-01-01")
+    #expect(rows.map(\.cents) == [0, 4000, 0, 1500])
+
+    ask.inputText = "And on shopping?"
+    ask.submitInput()
+    guard case .answer(_, .breakdown(let followRows, .month, let followRange)) = ask.messages.last?.content else {
+        Issue.record("Expected follow-up to stay a monthly breakdown")
+        return
+    }
+    #expect(followRange == range)
+    #expect(followRows.map(\.cents) == [0, 0, 999, 0])
+
+    ask.inputText = "What about last year?"
+    ask.submitInput()
+    guard case .answer(_, .breakdown(_, .month, let lastYear)) = ask.messages.last?.content else {
+        Issue.record("Expected follow-up period change")
+        return
+    }
+    #expect(lastYear.start.iso8601 == "2025-01-01")
+    #expect(lastYear.end.iso8601 == "2025-12-31")
+}

@@ -50,6 +50,8 @@ public final class AskModel: ObservableObject {
     @Published public var inputText: String = ""
     @Published public var messages: [AskMessage] = []
     @Published public private(set) var isThinking: Bool = false
+    /// The last operation answered, so a follow-up ("And on software?") can reuse its period and grouping.
+    private var lastOperation: ReportOperation?
 
     public var modelUnavailableReason: ModelUnavailableReason? {
         interpreter?.modelUnavailableReason
@@ -112,6 +114,21 @@ public final class AskModel: ObservableObject {
                 content: .text("Try one of the preset questions above.")
             ))
             return
+        }
+        if let lastOperation {
+            do {
+                if let followUp = try interpreter.interpretFollowUp(
+                    question,
+                    previous: lastOperation,
+                    resolvedName: resolvedName
+                ) {
+                    handleInterpretation(followUp, question: question)
+                    return
+                }
+            } catch {
+                messages.append(AskMessage(role: .assistant, content: .text(error.localizedDescription)))
+                return
+            }
         }
         if interpreter.modelUnavailableReason != nil {
             do {
@@ -204,6 +221,7 @@ public final class AskModel: ObservableObject {
             }
 
             let result = try ledger.runReport(resolvedOperation, today: today)
+            lastOperation = resolvedOperation
             let answer = formatAnswer(
                 result: result,
                 measure: measure,
@@ -424,6 +442,7 @@ private struct AskMessageRow: View {
                 Spacer(minLength: 40)
                 if case .text(let text) = message.content {
                     Text(text)
+                        .textSelection(.enabled)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(Color.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 14))
@@ -433,6 +452,7 @@ private struct AskMessageRow: View {
                     switch message.content {
                     case .text(let text):
                         Text(text)
+                            .textSelection(.enabled)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
@@ -440,6 +460,7 @@ private struct AskMessageRow: View {
                     case .clarification(let question, let prompt, let options):
                         VStack(alignment: .leading, spacing: 8) {
                             Text(prompt)
+                                .textSelection(.enabled)
                             FlowOptions(options: options) { choice in
                                 onClarificationChoice(question, choice)
                             }
@@ -449,6 +470,7 @@ private struct AskMessageRow: View {
 
                     case .answer(let sentence, let card):
                         Text(sentence)
+                            .textSelection(.enabled)
                             .font(.body)
                         AskCardView(card: card)
                     }
@@ -497,15 +519,16 @@ private struct AskCardView: View {
                     Text("No entries in this period.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                } else {
+                } else if grouping == .category {
                     Chart(rows) { row in
-                        let label = breakdownLabel(row, grouping: grouping)
                         BarMark(
-                            x: .value("Label", label),
+                            x: .value("Category", row.categoryName ?? "Uncategorized"),
                             y: .value("Amount", Double(row.cents) / 100.0)
                         )
                     }
                     .frame(height: 180)
+                } else {
+                    MonthlyBreakdownChart(rows: rows, byCategory: grouping == .monthAndCategory)
                 }
                 Text(dateRangeLabel(range))
                     .font(.caption)
@@ -556,17 +579,91 @@ private struct AskCardView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+        .textSelection(.enabled)
     }
 
-    private func breakdownLabel(_ row: BreakdownRow, grouping: Grouping) -> String {
-        switch grouping {
-        case .category:
-            return row.categoryName ?? "Uncategorized"
-        case .month:
-            return row.month ?? ""
-        case .monthAndCategory:
-            return [row.month, row.categoryName].compactMap { $0 }.joined(separator: " · ")
+}
+
+/// Bars per month on a date axis: "Jan", "Feb", … within one year, with the year
+/// added under the first month and under each month where the year changes.
+private struct MonthlyBreakdownChart: View {
+    let rows: [BreakdownRow]
+    let byCategory: Bool
+
+    private static let calendar = Calendar(identifier: .gregorian)
+
+    private struct Bar: Identifiable {
+        let id: String
+        let month: Date
+        let category: String
+        let euros: Double
+    }
+
+    private var bars: [Bar] {
+        rows.compactMap { row in
+            guard let month = row.month.flatMap(Self.monthStart) else { return nil }
+            return Bar(id: row.id, month: month, category: row.categoryName ?? "Uncategorized", euros: Double(row.cents) / 100.0)
         }
+    }
+
+    /// Every month shown, thinned so labels don't collide when the range is long.
+    private var ticks: [Date] {
+        let months = Array(Set(bars.map(\.month))).sorted()
+        let step = max(1, Int((Double(months.count) / 12.0).rounded(.up)))
+        return stride(from: 0, to: months.count, by: step).map { months[$0] }
+    }
+
+    private var spansYears: Bool {
+        Set(bars.map { Self.calendar.component(.year, from: $0.month) }).count > 1
+    }
+
+    var body: some View {
+        let ticks = ticks
+        let spansYears = spansYears
+        Chart(bars) { bar in
+            if byCategory {
+                BarMark(x: .value("Month", bar.month, unit: .month), y: .value("Amount", bar.euros))
+                    .foregroundStyle(by: .value("Category", bar.category))
+            } else {
+                BarMark(x: .value("Month", bar.month, unit: .month), y: .value("Amount", bar.euros))
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: ticks) { value in
+                AxisTick()
+                AxisValueLabel(centered: true) {
+                    if let date = value.as(Date.self) {
+                        let index = ticks.firstIndex(of: date) ?? 0
+                        let year = Self.calendar.component(.year, from: date)
+                        let showsYear = spansYears
+                            && (index == 0 || Self.calendar.component(.year, from: ticks[index - 1]) != year)
+                        VStack(spacing: 0) {
+                            Text(Self.monthLabel(date))
+                            if spansYears {
+                                Text(showsYear ? String(year) : " ")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .fixedSize()
+                    }
+                }
+            }
+        }
+        .frame(height: spansYears ? 200 : 180)
+    }
+
+    private static func monthStart(_ text: String) -> Date? {
+        let parts = text.split(separator: "-")
+        guard parts.count == 2, let year = Int(parts[0]), let month = Int(parts[1]) else { return nil }
+        return calendar.date(from: DateComponents(year: year, month: month, day: 1))
+    }
+
+    private static func monthLabel(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.setLocalizedDateFormatFromTemplate("MMM")
+        return formatter.string(from: date)
     }
 }
 

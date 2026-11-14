@@ -58,6 +58,12 @@ enum QuestionPeriod {
         return nil
     }
 
+    /// Whether the question names a period at all; "this month" names one even though its range is nil.
+    static func namesPeriod(in question: String, today: ReportingDate) -> Bool {
+        range(in: question, today: today) != nil
+            || contains(question.lowercased(), #"\b(this|current) month\b"#)
+    }
+
     /// The grouping the question asks for, or nil when it asks for none.
     static func grouping(in question: String) -> Grouping? {
         let lower = question.lowercased()
