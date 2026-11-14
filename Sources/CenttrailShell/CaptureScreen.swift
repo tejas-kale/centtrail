@@ -27,16 +27,28 @@ final class CaptureModel: ObservableObject {
 
     private var applyingPrefill = false
     private var categoryChosenManually = false
+    nonisolated(unsafe) private var newEntryObserver: NSObjectProtocol?
 
     init(ledger: Ledger, today: ReportingDate) throws {
         self.ledger = ledger
         self.today = today
         self.selectedDate = Self.date(from: today)
         try reload()
-        NotificationCenter.default.addObserver(forName: .centtrailNewEntry, object: nil, queue: .main) { [weak self] _ in
+        newEntryObserver = NotificationCenter.default.addObserver(forName: .centtrailNewEntry, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.openAddSheet()
+                guard let self else { return }
+                _ = CenttrailEntryTrigger.shared.consumePendingNewEntry()
+                self.openAddSheet()
             }
+        }
+        if CenttrailEntryTrigger.shared.consumePendingNewEntry() {
+            openAddSheet()
+        }
+    }
+
+    deinit {
+        if let newEntryObserver {
+            NotificationCenter.default.removeObserver(newEntryObserver)
         }
     }
 
