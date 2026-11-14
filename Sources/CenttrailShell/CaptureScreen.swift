@@ -22,6 +22,11 @@ final class CaptureModel: ObservableObject {
     @Published var accounts: [Account] = []
     @Published var categories: [LedgerCategory] = []
     @Published var payees: [Payee] = []
+    @Published private var frequentPayeesByKind: [Kind: [FrequentPayee]] = [:]
+
+    var frequentPayees: [FrequentPayee] {
+        frequentPayeesByKind[kind] ?? []
+    }
     @Published var transactions: [LedgerTransaction] = []
     @Published var homeSummary: HomeSummary?
     @Published var isPresentingAddSheet = false
@@ -95,6 +100,13 @@ final class CaptureModel: ObservableObject {
     func selectSuggestedPayee(_ name: String) {
         payee = name
         prefillCategory()
+    }
+
+    func selectFrequentPayee(_ suggestion: FrequentPayee) {
+        categoryChosenManually = false
+        payee = suggestion.payee.name
+        categoryID = suggestion.payee.defaultCategory?.id
+        accountID = suggestion.lastUsedAccount.id
     }
 
     func noteManualCategory() {
@@ -190,6 +202,10 @@ final class CaptureModel: ObservableObject {
         accounts = try ledger.accounts()
         categories = try ledger.categories()
         payees = try ledger.payees()
+        frequentPayeesByKind = [
+            .expense: try ledger.frequentPayees(kind: .expense),
+            .income: try ledger.frequentPayees(kind: .income),
+        ]
         transactions = try ledger.transactions()
         homeSummary = try ledger.homeSummary(on: today)
     }

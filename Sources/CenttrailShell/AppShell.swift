@@ -331,6 +331,23 @@ struct AddEntrySheet: View {
                 }
 
                 if model.kind != .transfer {
+                    if !model.frequentPayees.isEmpty {
+                        Section("Frequent payees") {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack {
+                                    ForEach(model.frequentPayees) { suggestion in
+                                        Button(suggestion.payee.name) {
+                                            model.selectFrequentPayee(suggestion)
+                                            isAmountFocused = true
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .buttonBorderShape(.capsule)
+                                        .accessibilityHint("Fills payee, category and account")
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Section {
                         TextField("Payee", text: $model.payee, prompt: Text("Who was paid"))
                             .onChange(of: model.payee) { _, _ in
