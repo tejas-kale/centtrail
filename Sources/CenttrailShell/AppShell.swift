@@ -87,23 +87,9 @@ struct HomeScreen: View {
                     Button {
                         model.openAddSheet()
                     } label: {
-                        Label("Add", systemImage: "plus")
+                        Label("Add transaction", systemImage: "plus")
                     }
                 }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Button {
-                    model.openAddSheet()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.title2.weight(.semibold))
-                        .padding(16)
-                }
-                .buttonStyle(.borderedProminent)
-                .clipShape(Circle())
-                .shadow(radius: 4, y: 2)
-                .padding(20)
-                .accessibilityLabel("Add transaction")
             }
         }
     }
@@ -535,20 +521,34 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             List {
-                NavigationLink("Accounts") {
-                    AccountsScreen(model: model)
+                Section("Ledger") {
+                    NavigationLink {
+                        AccountsScreen(model: model)
+                    } label: {
+                        Label("Accounts", systemImage: "creditcard")
+                    }
+                    NavigationLink {
+                        CategoriesScreen(model: model)
+                    } label: {
+                        Label("Categories", systemImage: "square.grid.2x2")
+                    }
+                    NavigationLink {
+                        PayeesScreen(model: model)
+                    } label: {
+                        Label("Payees", systemImage: "person.2")
+                    }
                 }
-                NavigationLink("Categories") {
-                    CategoriesScreen(model: model)
-                }
-                NavigationLink("Payees") {
-                    PayeesScreen(model: model)
-                }
-                NavigationLink("Recently deleted") {
-                    TrashScreen(model: model)
-                }
-                NavigationLink("Import CSV") {
-                    ImportScreen(model: model)
+                Section("Data") {
+                    NavigationLink {
+                        ImportScreen(model: model)
+                    } label: {
+                        Label("Import CSV", systemImage: "square.and.arrow.down")
+                    }
+                    NavigationLink {
+                        TrashScreen(model: model)
+                    } label: {
+                        Label("Recently deleted", systemImage: "trash")
+                    }
                 }
             }
             .navigationTitle("Settings")
