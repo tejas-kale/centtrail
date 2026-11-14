@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Transaction kinds are expense, income and transfer only
 - [ ] A €100 November Shopping purchase and a €100 November refund report €100 spending and €100 income

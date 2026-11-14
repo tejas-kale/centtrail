@@ -4,7 +4,7 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Saying the Siri phrase on the iPhone opens the + form
 - [ ] The shortcut can be assigned to the Action button and opens the form

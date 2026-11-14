@@ -4,7 +4,7 @@
 
 **Blocked by:** 12
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Model availability comes from the system; the note appears only when the model really is unavailable
 - [ ] The model's output is validated like any other operation; invalid output becomes a clarification or explanation
