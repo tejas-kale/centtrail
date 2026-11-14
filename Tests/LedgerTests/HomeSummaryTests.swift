@@ -84,3 +84,67 @@ import Testing
     #expect(summary.percentageChange == nil)
     #expect(summary.unequalLengths == false)
 }
+
+
+@Test func homeSummaryIncludesLastMonthOnlyCategoryWithZeroThisMonthAndOrdersByCurrentSpending() throws {
+    let ledger = try Ledger.openInMemory()
+    _ = try recordEntry(ledger, cents: 3500, kind: .expense, payee: "REWE", date: "2026-10-02", category: "Supermarket")
+    _ = try recordEntry(ledger, cents: 2000, kind: .expense, payee: "Middle Eats", date: "2026-10-15", category: "Restaurant")
+    _ = try recordEntry(ledger, cents: 8900, kind: .expense, payee: "Vattenfall", date: "2026-10-08", category: "Utilities")
+    _ = try recordEntry(ledger, cents: 12000, kind: .expense, payee: "DB", date: "2026-10-22", category: "Train")
+    let trashed = try recordEntry(ledger, cents: 5000, kind: .expense, payee: "DB", date: "2026-10-05", category: "Train")
+    try ledger.trash(trashed.id, on: try #require(ReportingDate(iso8601: "2026-10-06")))
+    _ = try recordEntry(ledger, cents: 10000, kind: .expense, payee: "Trade Republic", date: "2026-10-03", category: "Savings")
+    _ = try recordEntry(ledger, cents: 50000, kind: .income, payee: "Acme", date: "2026-10-06", category: "Salary")
+    _ = try recordEntry(ledger, cents: 15000, kind: .transfer, payee: "India", date: "2026-10-07", category: "Savings")
+
+    _ = try recordEntry(ledger, cents: 6500, kind: .expense, payee: "Middle Eats", date: "2026-11-04", category: "Restaurant")
+    _ = try recordEntry(ledger, cents: 4000, kind: .expense, payee: "Lidl", date: "2026-11-10", category: "Supermarket")
+
+    let today = try #require(ReportingDate(iso8601: "2026-11-15"))
+    let summary = try ledger.homeSummary(on: today)
+
+    #expect(summary.currentSpendingCents == 10500)
+    #expect(summary.previousSameDaysSpendingCents == 14400)
+    #expect(summary.previousFullMonthSpendingCents == 26400)
+
+    #expect(summary.categories.map(\.category.name) == ["Restaurant", "Supermarket", "Train", "Utilities"])
+
+    #expect(summary.categories[0].currentCents == 6500)
+    #expect(summary.categories[0].previousSameDaysCents == 2000)
+    #expect(summary.categories[0].previousFullMonthCents == 2000)
+
+    #expect(summary.categories[1].currentCents == 4000)
+    #expect(summary.categories[1].previousSameDaysCents == 3500)
+    #expect(summary.categories[1].previousFullMonthCents == 3500)
+
+    #expect(summary.categories[2].currentCents == 0)
+    #expect(summary.categories[2].previousSameDaysCents == 0)
+    #expect(summary.categories[2].previousFullMonthCents == 12000)
+
+    #expect(summary.categories[3].currentCents == 0)
+    #expect(summary.categories[3].previousSameDaysCents == 8900)
+    #expect(summary.categories[3].previousFullMonthCents == 8900)
+}
+
+@Test func homeSummaryWithNoSpendingThisMonthReportsZeroCurrentAndPreservesLastMonthCategories() throws {
+    let ledger = try Ledger.openInMemory()
+    _ = try recordEntry(ledger, cents: 3250, kind: .expense, payee: "REWE", date: "2026-10-05", category: "Supermarket")
+    _ = try recordEntry(ledger, cents: 50000, kind: .income, payee: "Acme", date: "2026-11-01", category: "Salary")
+    _ = try recordEntry(ledger, cents: 20000, kind: .expense, payee: "Trade Republic", date: "2026-11-02", category: "Savings")
+    _ = try recordEntry(ledger, cents: 10000, kind: .transfer, payee: "India", date: "2026-11-03", category: "Savings")
+
+    let today = try #require(ReportingDate(iso8601: "2026-11-10"))
+    let summary = try ledger.homeSummary(on: today)
+
+    #expect(summary.currentSpendingCents == 0)
+    #expect(summary.previousSameDaysSpendingCents == 3250)
+    #expect(summary.previousFullMonthSpendingCents == 3250)
+    #expect(summary.changeCents == -3250)
+
+    #expect(summary.categories.count == 1)
+    #expect(summary.categories[0].category.name == "Supermarket")
+    #expect(summary.categories[0].currentCents == 0)
+    #expect(summary.categories[0].previousSameDaysCents == 3250)
+    #expect(summary.categories[0].previousFullMonthCents == 3250)
+}
