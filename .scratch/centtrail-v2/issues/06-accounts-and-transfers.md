@@ -4,7 +4,7 @@
 
 **Blocked by:** 04, 05
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 - [ ] Accounts are seeded with N26, Revolut, Cash and India, and can be added, renamed and removed in Settings
 - [ ] Removing an account in use is refused with a message

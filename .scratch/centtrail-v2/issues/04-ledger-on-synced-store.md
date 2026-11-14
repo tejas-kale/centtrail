@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02
 
-**Status:** in-progress
+**Status:** done
 
 - [ ] The full Ledger test suite passes against the new store
 - [ ] A transaction added on the iPhone appears on the Mac with the current screens, and vice versa
