@@ -1,7 +1,6 @@
 import Foundation
 import GRDB
 import SQLiteData
-import SwiftData
 
 @Table("category")
 struct CategoryRecord: Identifiable, Sendable {
@@ -163,12 +162,6 @@ final class SQLiteConnection {
         switch syncMode {
         case .disabled:
             syncEngine = nil
-        case .automatic:
-            if let containerID = ModelConfiguration(groupContainer: .automatic).cloudKitContainerIdentifier {
-                syncEngine = try Self.makeSyncEngine(for: database, containerIdentifier: containerID)
-            } else {
-                syncEngine = nil
-            }
         case .enabled(let containerIdentifier):
             syncEngine = try Self.makeSyncEngine(for: database, containerIdentifier: containerIdentifier)
         }
@@ -176,7 +169,7 @@ final class SQLiteConnection {
 
     private static func makeSyncEngine(
         for database: any DatabaseWriter,
-        containerIdentifier: String?
+        containerIdentifier: String
     ) throws -> SyncEngine {
         try SyncEngine(
             for: database,
@@ -266,5 +259,39 @@ enum SQLiteValue: Equatable {
     var integer: Int64? {
         if case .integer(let value) = self { return value }
         return nil
+    }
+}
+
+/// Keeps a change observer alive. Observing stops on `cancel()` or when the
+/// observation is released.
+public final class LedgerObservation {
+    private var cancellable: AnyDatabaseCancellable?
+
+    init(_ cancellable: AnyDatabaseCancellable) {
+        self.cancellable = cancellable
+    }
+
+    public func cancel() {
+        cancellable?.cancel()
+        cancellable = nil
+    }
+
+    deinit {
+        cancellable?.cancel()
+    }
+}
+
+extension SQLiteConnection {
+    static let ledgerTables = ["category", "counterparty", "entry", "counterparty_alias", "import_row", "proposed_payee_default"]
+
+    func observeChanges(_ onChange: @escaping @Sendable () -> Void) -> LedgerObservation {
+        let regions = Self.ledgerTables.map { GRDB.Table($0) as any DatabaseRegionConvertible }
+        let observation = DatabaseRegionObservation(tracking: regions)
+        let cancellable = observation.start(
+            in: database,
+            onError: { _ in },
+            onChange: { _ in onChange() }
+        )
+        return LedgerObservation(cancellable)
     }
 }

@@ -22,10 +22,8 @@ import Testing
         .appendingPathComponent("centtrail-seed-\(UUID().uuidString).sqlite")
     defer { try? FileManager.default.removeItem(at: url) }
 
-    let initialCategories: [Category]
-    do {
+    let initialCategories = try {
         let ledger = try Ledger.open(at: url, sync: .disabled)
-        initialCategories = try ledger.categories()
         _ = try recordEntry(
             ledger,
             cents: 1500,
@@ -34,7 +32,8 @@ import Testing
             date: "2026-04-10",
             category: "Supermarket"
         )
-    }
+        return try ledger.categories()
+    }()
 
     let reopened = try Ledger.open(at: url, sync: .disabled)
     let reopenedCategories = try reopened.categories()
@@ -43,7 +42,7 @@ import Testing
 }
 
 @Test func syncedStorePassesSyncEngineSchemaValidationAndSupportsAllOperations() throws {
-    let ledger = try Ledger.openInMemory(sync: .enabled(containerIdentifier: "iCloud.com.tejaskale.centtrail"))
+    let ledger = try openSyncedLedger()
     let supermarket = try namedCategory(ledger, "Supermarket")
     let restaurant = try namedCategory(ledger, "Restaurant")
 
@@ -89,4 +88,65 @@ import Testing
     #expect(throws: LedgerError.self) {
         try ledger.confirmAlias("REWE MARKT", of: edeka.payee.id)
     }
+}
+
+@Test func observersHearAboutEveryLedgerChangeUntilTheyStop() throws {
+    let ledger = try openSyncedLedger()
+    let counter = ChangeCounter()
+    var observation: LedgerObservation? = ledger.observeChanges { counter.increment() }
+
+    let entry = try recordEntry(ledger, cents: 1200, kind: .expense, payee: "REWE", date: "2026-05-01", category: "Supermarket")
+    #expect(counter.value == 1)
+
+    try ledger.trash(entry.id, on: try #require(ReportingDate(iso8601: "2026-05-02")))
+    #expect(counter.value == 2)
+
+    _ = try ledger.transactions()
+    #expect(counter.value == 2)
+
+    observation?.cancel()
+    observation = nil
+    _ = try recordEntry(ledger, cents: 300, kind: .expense, payee: "Bakery", date: "2026-05-03", category: "Supermarket")
+    #expect(counter.value == 2)
+}
+
+@Test func syncedStoreSupportsPayeeMergeCategoryEditsAndTrashPurge() throws {
+    let ledger = try openSyncedLedger()
+    let rewe = try recordEntry(ledger, cents: 1000, kind: .expense, payee: "REWE", date: "2026-05-01", category: "Supermarket")
+    let reweCity = try recordEntry(ledger, cents: 500, kind: .expense, payee: "REWE City", date: "2026-05-02", category: "Supermarket")
+
+    try ledger.mergePayees(sourceID: reweCity.payee.id, into: rewe.payee.id)
+    #expect(try ledger.transactions().allSatisfy { $0.payee.id == rewe.payee.id })
+    #expect(try recordEntry(ledger, cents: 200, kind: .expense, payee: "REWE City", date: "2026-05-03", category: "Supermarket").payee.id == rewe.payee.id)
+
+    let pets = try ledger.addCategory(name: "Pets")
+    let renamed = try ledger.renameCategory(id: pets.id, to: "Pet care")
+    #expect(try ledger.categories().contains(renamed))
+    try ledger.removeCategory(id: pets.id)
+    #expect(try !ledger.categories().contains { $0.id == pets.id })
+
+    try ledger.trash(rewe.id, on: try #require(ReportingDate(iso8601: "2026-05-04")))
+    #expect(try ledger.trashedEntries(today: try #require(ReportingDate(iso8601: "2026-05-10"))).count == 1)
+    #expect(try ledger.trashedEntries(today: try #require(ReportingDate(iso8601: "2026-06-10"))).isEmpty)
+    #expect(try ledger.transactions().count == 2)
+}
+
+private final class ChangeCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func increment() { lock.withLock { count += 1 } }
+}
+
+/// A file-backed ledger with the sync engine attached (SQLiteData swaps in its
+/// test CloudKit stand-in). In-memory ledgers would share one in-memory sync
+/// metadatabase and lock each other when tests run in parallel.
+private func openSyncedLedger() throws -> Ledger {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("centtrail-synced-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return try Ledger.open(
+        at: directory.appendingPathComponent("ledger.sqlite"),
+        sync: .enabled(containerIdentifier: "iCloud.com.tejaskale.centtrail")
+    )
 }

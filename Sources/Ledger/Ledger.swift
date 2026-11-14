@@ -28,13 +28,11 @@ public struct Category: Hashable, Sendable, Identifiable {
 
 public final class Ledger {
     public enum SyncMode: Equatable, Sendable {
-        /// Local SQLiteData store with CloudKit sync disabled.
+        /// Local store only; nothing leaves the device.
         case disabled
-        /// Enables CloudKit sync automatically when a CloudKit container is configured
-        /// in the app's entitlements; otherwise runs locally.
-        case automatic
-        /// Enables CloudKit sync using the given container identifier (or entitlements).
-        case enabled(containerIdentifier: String? = nil)
+        /// Syncs through the owner's iCloud account using the given CloudKit
+        /// container. The signed app needs the matching iCloud entitlement.
+        case enabled(containerIdentifier: String)
     }
 
     let connection: SQLiteConnection
@@ -43,13 +41,20 @@ public final class Ledger {
         try Ledger(path: nil, syncMode: sync)
     }
 
-    public static func open(at file: URL, sync: SyncMode = .automatic) throws -> Ledger {
+    public static func open(at file: URL, sync: SyncMode = .disabled) throws -> Ledger {
         try Ledger(path: file.path(percentEncoded: false), syncMode: sync)
     }
 
     init(path: String?, syncMode: SyncMode) throws {
         connection = try SQLiteConnection(path: path, syncMode: syncMode)
         try seedCategories()
+    }
+
+    /// Calls `onChange` after every committed change to the ledger, whether made
+    /// on this device or pulled in by iCloud sync. Keep the returned observation
+    /// alive for as long as you want to hear about changes.
+    public func observeChanges(_ onChange: @escaping @Sendable () -> Void) -> LedgerObservation {
+        connection.observeChanges(onChange)
     }
 
     public func record(_ draft: EntryDraft) throws -> Transaction {
