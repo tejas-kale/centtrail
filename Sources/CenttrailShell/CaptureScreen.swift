@@ -143,6 +143,7 @@ final class CaptureModel: ObservableObject {
     }
 
     private func reload() throws {
+        try ledger.purgeExpiredTrash(today: today)
         categories = try ledger.categories()
         payees = try ledger.payees()
         transactions = try ledger.transactions()

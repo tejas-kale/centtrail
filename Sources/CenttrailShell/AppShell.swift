@@ -462,10 +462,13 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             List {
+                NavigationLink("Categories") {
+                    CategoriesScreen(model: model)
+                }
                 NavigationLink("Payees") {
                     PayeesScreen(model: model)
                 }
-                NavigationLink("Trash") {
+                NavigationLink("Recently deleted") {
                     TrashScreen(model: model)
                 }
                 NavigationLink("Import CSV") {
@@ -473,6 +476,120 @@ struct SettingsScreen: View {
                 }
             }
             .navigationTitle("Settings")
+        }
+    }
+}
+
+struct CategoriesScreen: View {
+    @ObservedObject var model: CaptureModel
+    @State private var newName = ""
+    @State private var countsAsSpending = true
+    @State private var renamingCategory: LedgerCategory?
+    @State private var renameText = ""
+    @State private var message: String?
+
+    var body: some View {
+        Form {
+            if let message {
+                Section {
+                    Text(message)
+                        .foregroundStyle(.red)
+                }
+            }
+            Section("Add category") {
+                TextField("Category name", text: $newName)
+                Toggle("Counts as spending", isOn: $countsAsSpending)
+                Button("Add category", action: addCategory)
+            }
+            Section("Categories") {
+                ForEach(model.categories) { category in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(category.name)
+                            if !category.countsAsSpending {
+                                Text("Excluded from spending")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Button("Rename") {
+                            renameText = category.name
+                            renamingCategory = category
+                        }
+                        .buttonStyle(.borderless)
+                        Button("Remove", role: .destructive) {
+                            removeCategory(category)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Categories")
+        .sheet(item: $renamingCategory) { category in
+            NavigationStack {
+                Form {
+                    TextField("Category name", text: $renameText)
+                }
+                .navigationTitle("Rename \(category.name)")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {
+                            renamingCategory = nil
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            saveRename(category)
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear(perform: reload)
+    }
+
+    private func addCategory() {
+        do {
+            _ = try model.ledger.addCategory(name: newName, countsAsSpending: countsAsSpending)
+            newName = ""
+            countsAsSpending = true
+            message = nil
+            try model.reloadFromOutside()
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func saveRename(_ category: LedgerCategory) {
+        do {
+            _ = try model.ledger.renameCategory(id: category.id, to: renameText)
+            renamingCategory = nil
+            message = nil
+            try model.reloadFromOutside()
+        } catch {
+            renamingCategory = nil
+            message = error.localizedDescription
+        }
+    }
+
+    private func removeCategory(_ category: LedgerCategory) {
+        do {
+            try model.ledger.removeCategory(id: category.id)
+            message = nil
+            try model.reloadFromOutside()
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func reload() {
+        do {
+            try model.reloadFromOutside()
+            message = nil
+        } catch {
+            message = error.localizedDescription
         }
     }
 }
@@ -589,20 +706,25 @@ struct TrashScreen: View {
             }
             if entries.isEmpty {
                 ContentUnavailableView(
-                    "Trash is empty",
+                    "Recently deleted is empty",
                     systemImage: "trash",
-                    description: Text("Deleted transactions stay here for 30 days.")
+                    description: Text("Deleted transactions stay here for 30 days before automatic removal.")
                 )
             } else {
                 ForEach(entries) { entry in
                     HStack {
-                        VStack(alignment: .leading) {
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(entry.transaction.payee.name)
-                            Text("\(entry.daysRemaining) days remaining")
+                            Text("\(entry.transaction.category.name) · \(entry.transaction.reportingDate.iso8601)")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Text("\(entry.daysRemaining) \(entry.daysRemaining == 1 ? "day" : "days") remaining")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
+                        Text(formatEuro(entry.transaction.amount.value))
+                            .monospacedDigit()
                         Button("Restore") {
                             do {
                                 try model.ledger.restore(entry.id)
@@ -612,22 +734,12 @@ struct TrashScreen: View {
                                 message = error.localizedDescription
                             }
                         }
+                        .buttonStyle(.bordered)
                     }
                 }
             }
         }
-        .navigationTitle("Trash")
-        .toolbar {
-            Button("Purge expired") {
-                do {
-                    try model.ledger.purgeExpiredTrash(today: model.today)
-                    message = nil
-                    reload()
-                } catch {
-                    message = error.localizedDescription
-                }
-            }
-        }
+        .navigationTitle("Recently deleted")
         .onAppear(perform: reload)
     }
 
