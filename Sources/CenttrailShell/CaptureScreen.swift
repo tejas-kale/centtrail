@@ -333,12 +333,13 @@ private final class LedgerLoader: ObservableObject {
 
 struct TransactionRow: View {
     let transaction: LedgerTransaction
+    var showsDate = true
 
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(transaction.payee?.name ?? "Transfer")
-                Text("\(transaction.account.name)\(transaction.destinationAccount.map { " → \($0.name)" } ?? "") · \(transaction.reportingDate.iso8601)")
+                Text("\(transaction.account.name)\(transaction.destinationAccount.map { " → \($0.name)" } ?? "")\(showsDate ? " · \(transaction.reportingDate.iso8601)" : "")")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

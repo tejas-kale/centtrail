@@ -281,9 +281,13 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
             return .unsupported(unsupportedComparisonExplanation)
         }
 
-        // Validate date range: either both nil (current month default) or both valid YYYY-MM-DD with start.iso8601 <= end.iso8601.
+        // A period phrase in the question ("this year", "in March") wins over the model's dates,
+        // which are unreliable. Otherwise the model's dates must be both nil (current month
+        // default) or valid YYYY-MM-DD with start.iso8601 <= end.iso8601.
         let range: DateRange?
         switch (trimmedNonEmpty(intent.startDate), trimmedNonEmpty(intent.endDate)) {
+        case _ where intent.operation != .comparison && QuestionPeriod.range(in: question, today: context.today) != nil:
+            range = QuestionPeriod.range(in: question, today: context.today)
         case (nil, nil):
             range = nil
         case (let startStr?, let endStr?):
@@ -293,6 +297,12 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
                 return .unsupported("I couldn't understand that date range. Try YYYY-MM-DD or a month like \"last month\".")
             }
             range = DateRange(start: start, end: end)
+        case (let startStr?, nil):
+            // "since March": an open end runs to today.
+            guard let start = ReportingDate(iso8601: startStr), start.iso8601 <= context.today.iso8601 else {
+                return .unsupported("I couldn't understand that date range. Try a month like \"last month\" or \"this year\".")
+            }
+            range = DateRange(start: start, end: context.today)
         default:
             return .unsupported("I couldn't understand that date range. Please specify both a start and end date or omit the period.")
         }
@@ -319,7 +329,17 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
 
         let measure: Measure = intent.measure == .income ? .income : .spending
 
-        switch intent.operation {
+        // "each month" / "by category" in the question means a breakdown, whatever the model chose.
+        let questionGrouping = QuestionPeriod.grouping(in: question)
+        var operation = intent.operation
+        switch (operation, questionGrouping) {
+        case (.total, _?), (.search, .month?), (.search, .monthAndCategory?):
+            operation = .breakdown
+        default:
+            break
+        }
+
+        switch operation {
         case .total:
             return .operation(.total(ReportQuery(
                 measure: measure,
@@ -330,12 +350,14 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
 
         case .breakdown:
             let grouping: Grouping
-            switch intent.grouping {
-            case .month:
+            switch (questionGrouping, intent.grouping) {
+            case (let detected?, _):
+                grouping = detected
+            case (nil, .month):
                 grouping = .month
-            case .monthAndCategory:
+            case (nil, .monthAndCategory):
                 grouping = .monthAndCategory
-            case .category, nil:
+            case (nil, .category), (nil, nil):
                 grouping = .category
             }
             return .operation(.breakdown(ReportQuery(
@@ -475,10 +497,14 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
                 resolvedCategoryID = match.id
             } else {
                 let candidates = matchingCandidates(for: categoryName, in: allKnownNames)
-                if candidates.count > 1 {
+                if candidates.count == 1,
+                   let match = context.categories.first(where: { $0.name.caseInsensitiveCompare(candidates[0]) == .orderedSame }) {
+                    resolvedCategoryID = match.id
+                } else if candidates.count > 1 {
                     return .clarification(candidates)
+                } else {
+                    return .invalid("I couldn't find a category named \"\(categoryName)\".")
                 }
-                return .invalid("I couldn't find a category named \"\(categoryName)\".")
             }
         }
 
@@ -490,10 +516,14 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
                 resolvedPayeeName = alias
             } else {
                 let candidates = matchingCandidates(for: payeeName, in: allKnownNames)
-                if candidates.count > 1 {
+                if candidates.count == 1,
+                   let match = (context.payees.map(\.name) + context.aliasNames).first(where: { $0.caseInsensitiveCompare(candidates[0]) == .orderedSame }) {
+                    resolvedPayeeName = match
+                } else if candidates.count > 1 {
                     return .clarification(candidates)
+                } else {
+                    return .invalid("I couldn't find a payee named \"\(payeeName)\".")
                 }
-                return .invalid("I couldn't find a payee named \"\(payeeName)\".")
             }
         }
 
@@ -542,6 +572,8 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
     Never invent numbers or execute mutations (add, delete, edit, merge, import).
     For mutation requests or questions outside spending/income totals, breakdowns, comparisons, or transaction searches, return operation = unsupported.
     If no date period is mentioned, leave startDate and endDate nil (which defaults to the current calendar month).
+    "This year" runs from January 1 of the current year to today; "last year" is the whole previous calendar year.
+    Questions asking for amounts "each month", "per month" or "monthly" are a breakdown with grouping month.
     Comparisons support this month against matching elapsed days of last month only. For that comparison leave dates nil; return unsupported for other comparison periods.
     Only use categoryName from the provided categories list and payeeName from the provided payees/aliases list.
     """

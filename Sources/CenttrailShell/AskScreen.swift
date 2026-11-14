@@ -291,6 +291,7 @@ public final class AskModel: ObservableObject {
 
 struct AskScreen: View {
     @StateObject private var askModel: AskModel
+    @FocusState private var isInputFocused: Bool
 
     init(model: CaptureModel) {
         _askModel = StateObject(wrappedValue: AskModel(ledger: model.ledger, today: model.today))
@@ -306,6 +307,8 @@ struct AskScreen: View {
                 presetChipsBar
                 Divider()
                 chatThread
+                    .contentShape(Rectangle())
+                    .onTapGesture { isInputFocused = false }
                 Divider()
                 inputBar
             }
@@ -332,6 +335,7 @@ struct AskScreen: View {
             HStack(spacing: 8) {
                 ForEach(AskPreset.allCases) { preset in
                     Button(preset.rawValue) {
+                        isInputFocused = false
                         askModel.runPreset(preset)
                     }
                     .buttonStyle(.bordered)
@@ -375,6 +379,7 @@ struct AskScreen: View {
                 }
                 .padding()
             }
+            .scrollDismissesKeyboard(.immediately)
             .onChange(of: askModel.messages.count) { _, _ in
                 if let lastID = askModel.messages.last?.id {
                     withAnimation {
@@ -385,16 +390,20 @@ struct AskScreen: View {
         }
     }
 
+    /// Sends the question and hides the keyboard so the tab bar is reachable again.
+    private func submit() {
+        askModel.submitInput()
+        isInputFocused = false
+    }
+
     private var inputBar: some View {
         HStack(spacing: 8) {
             TextField("Ask about your spending", text: $askModel.inputText)
                 .textFieldStyle(.roundedBorder)
-                .onSubmit {
-                    askModel.submitInput()
-                }
-            Button {
-                askModel.submitInput()
-            } label: {
+                .focused($isInputFocused)
+                .submitLabel(.send)
+                .onSubmit(submit)
+            Button(action: submit) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.title2)
             }

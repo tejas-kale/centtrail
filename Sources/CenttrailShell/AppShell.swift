@@ -47,12 +47,10 @@ struct HomeScreen: View {
                             HomeSummaryCard(summary: summary, today: model.today)
                         }
 
-                        if !summary.categories.isEmpty {
-                            Section("Categories") {
-                                HomeCategoryComparisonChart(categories: summary.categories)
-                                ForEach(summary.categories) { item in
-                                    HomeCategoryComparisonRow(item: item)
-                                }
+                        let topCategories = Array(summary.categories.filter { $0.currentCents > 0 }.prefix(5))
+                        if !topCategories.isEmpty {
+                            Section("Top categories") {
+                                HomeCategoryComparisonChart(categories: topCategories)
                             }
                         }
                     }
@@ -109,20 +107,8 @@ private struct HomeSummaryCard: View {
                 .font(.largeTitle.bold())
                 .monospacedDigit()
 
-            HStack(spacing: 6) {
-                Text("\(shortRangeLabel(summary.currentMonthRange)) vs \(shortRangeLabel(summary.previousSameDaysRange))")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(formatSignedEuro(summary.changeCents))
-                    .fontWeight(.medium)
-                    .monospacedDigit()
-                if let percentage = summary.percentageChange {
-                    Text("(\(formatPercentageChange(percentage)))")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-            .font(.subheadline)
+            comparisonLine
+                .font(.subheadline)
 
             Text("\(monthName(summary.previousFullMonthRange.start)) total: \(formatEuro(summary.previousFullMonthSpendingCents))")
                 .font(.footnote)
@@ -136,10 +122,35 @@ private struct HomeSummaryCard: View {
         }
         .padding(.vertical, 4)
     }
+
+    /// Spelled out ("€1,200 less than 1–14 Oct") instead of a bare signed amount,
+    /// which read like a negative balance.
+    @ViewBuilder
+    private var comparisonLine: some View {
+        let change = summary.changeCents
+        let earlier = shortRangeLabel(summary.previousSameDaysRange)
+        if change == 0 {
+            Text("Same as \(earlier)")
+                .foregroundStyle(.secondary)
+        } else {
+            HStack(spacing: 4) {
+                Image(systemName: change < 0 ? "arrow.down.right" : "arrow.up.right")
+                Text("\(formatEuro(abs(change))) \(change < 0 ? "less" : "more") than \(earlier)")
+                    .monospacedDigit()
+                if let percentage = summary.percentageChange {
+                    Text("(\(abs(percentage).formatted(.number.precision(.fractionLength(0))))%)")
+                        .monospacedDigit()
+                }
+            }
+            .foregroundStyle(change < 0 ? Color.green : Color.orange)
+        }
+    }
 }
 
 private struct HomeCategoryComparisonChart: View {
     let categories: [CategorySummary]
+    private static let currentPeriod = "This month"
+    private static let previousPeriod = "Same days last month"
 
     private struct BarEntry: Identifiable {
         let id: String
@@ -154,18 +165,20 @@ private struct HomeCategoryComparisonChart: View {
                 BarEntry(
                     id: "\(item.id.rawValue)-current",
                     categoryName: item.category.name,
-                    period: "This month",
+                    period: Self.currentPeriod,
                     euros: Double(item.currentCents) / 100.0
                 ),
                 BarEntry(
                     id: "\(item.id.rawValue)-previous",
                     categoryName: item.category.name,
-                    period: "Last month",
+                    period: Self.previousPeriod,
                     euros: Double(item.previousSameDaysCents) / 100.0
                 ),
             ]
         }
     }
+
+    private var maxEuros: Double { bars.map(\.euros).max() ?? 0 }
 
     var body: some View {
         Chart(bars) { bar in
@@ -176,48 +189,27 @@ private struct HomeCategoryComparisonChart: View {
             .position(by: .value("Period", bar.period))
             .foregroundStyle(by: .value("Period", bar.period))
             .cornerRadius(4)
-        }
-        .chartForegroundStyleScale([
-            "This month": Color.accentColor,
-            "Last month": Color.secondary.opacity(0.45),
-        ])
-        .chartLegend(position: .top, alignment: .leading)
-        .chartXAxis {
-            AxisMarks(position: .bottom) { value in
-                AxisGridLine()
-                AxisValueLabel {
-                    if let euros = value.as(Double.self) {
-                        Text(euros.formatted(.currency(code: "EUR").precision(.fractionLength(0))))
-                    }
-                }
+            .annotation(position: .trailing, alignment: .leading, spacing: 4) {
+                Text(bar.euros.formatted(.currency(code: "EUR").precision(.fractionLength(0))))
+                    .font(.caption2)
+                    .fontWeight(bar.period == Self.currentPeriod ? .semibold : .regular)
+                    .foregroundStyle(bar.period == Self.currentPeriod ? .primary : .secondary)
+                    .monospacedDigit()
             }
         }
+        .chartForegroundStyleScale([
+            Self.currentPeriod: Color.accentColor,
+            Self.previousPeriod: Color.secondary.opacity(0.45),
+        ])
+        .chartLegend(position: .top, alignment: .leading)
+        // Values sit on the bars, so the axis only adds noise; the headroom keeps labels inside the chart.
+        .chartXAxis(.hidden)
+        .chartXScale(domain: 0...max(maxEuros * 1.3, 1))
         .chartYAxis {
             AxisMarks(position: .leading)
         }
-        .frame(height: CGFloat(max(categories.count, 1)) * 46 + 28)
+        .frame(height: CGFloat(max(categories.count, 1)) * 52 + 28)
         .padding(.vertical, 4)
-    }
-}
-
-private struct HomeCategoryComparisonRow: View {
-    let item: CategorySummary
-
-    var body: some View {
-        HStack {
-            Text(item.category.name)
-                .lineLimit(1)
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(formatEuro(item.currentCents))
-                    .fontWeight(.medium)
-                    .monospacedDigit()
-                Text("Last month: \(formatEuro(item.previousSameDaysCents))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-        }
     }
 }
 
@@ -248,16 +240,22 @@ struct AllTransactionsScreen: View {
             if filteredTransactions.isEmpty {
                 ContentUnavailableView.search(text: searchText)
             } else {
-                ForEach(filteredTransactions) { transaction in
-                    NavigationLink {
-                        TransactionDetail(model: model, transaction: transaction)
-                    } label: {
-                        TransactionRow(transaction: transaction)
-                    }
-                    .swipeActions {
-                        Button("Trash", role: .destructive) {
-                            model.trash(transaction)
+                ForEach(transactionsByDay, id: \.date) { day in
+                    Section {
+                        ForEach(day.transactions) { transaction in
+                            NavigationLink {
+                                TransactionDetail(model: model, transaction: transaction)
+                            } label: {
+                                TransactionRow(transaction: transaction, showsDate: false)
+                            }
+                            .swipeActions {
+                                Button("Trash", role: .destructive) {
+                                    model.trash(transaction)
+                                }
+                            }
                         }
+                    } header: {
+                        Text(dayLabel(day.date, today: model.today))
                     }
                 }
             }
@@ -265,6 +263,27 @@ struct AllTransactionsScreen: View {
         .navigationTitle("All transactions")
         .searchable(text: $searchText, prompt: "Search payee, category, or note")
     }
+
+    /// Newest day first; transactions keep their order within a day.
+    private var transactionsByDay: [(date: ReportingDate, transactions: [LedgerTransaction])] {
+        Dictionary(grouping: filteredTransactions, by: \.reportingDate)
+            .map { (date: $0.key, transactions: $0.value) }
+            .sorted { $0.date.iso8601 > $1.date.iso8601 }
+    }
+}
+
+/// "Today", "Yesterday", or a weekday date such as "Fri, 13 Nov 2026".
+func dayLabel(_ date: ReportingDate, today: ReportingDate) -> String {
+    if date == today { return "Today" }
+    if date == today.addingDays(-1) { return "Yesterday" }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    guard let value = calendar.date(from: DateComponents(year: date.year, month: date.month, day: date.day)) else {
+        return date.iso8601
+    }
+    var style = Date.FormatStyle(date: .abbreviated, time: .omitted).weekday(.abbreviated)
+    style.timeZone = calendar.timeZone
+    return value.formatted(style)
 }
 
 struct AddEntrySheet: View {

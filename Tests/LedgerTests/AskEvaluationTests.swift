@@ -76,7 +76,7 @@ import Testing
         }
     )
     let badDateResult = try await Interpreter(ledger: ledger, today: today, backend: badDateBackend)
-        .interpretReportAsync("spent in april")
+        .interpretReportAsync("spent in that period")
     guard case .unsupported = badDateResult else {
         Issue.record("Expected unsupported for inverted date range, got \(badDateResult)")
         return
@@ -357,4 +357,50 @@ func appleFoundationModelLiveSmokeAndTimingWhenAvailable() async throws {
     if case .operation = warmResult {} else {
         Issue.record("Expected operation for warm live query, got \(warmResult)")
     }
+}
+
+@Test func restaurantsEachMonthThisYearIsAMonthlyBreakdownFromJanuary() async throws {
+    let ledger = try Ledger.openInMemory()
+    _ = try recordEntry(ledger, cents: 4000, kind: .expense, payee: "Middle Eats", date: "2026-03-05", category: "Restaurant")
+    let today = try #require(ReportingDate(iso8601: "2026-11-14"))
+    let restaurant = try namedCategory(ledger, "Restaurant")
+    let question = "How much did I spend on restaurants each month this year"
+    let expected = ReportInterpretation.operation(.breakdown(ReportQuery(
+        measure: .spending,
+        range: DateRange(
+            start: try #require(ReportingDate(iso8601: "2026-01-01")),
+            end: today
+        ),
+        categoryID: restaurant.id,
+        grouping: .month
+    )))
+
+    let keyword = Interpreter(ledger: ledger, today: today, backend: KeywordLanguageModelBackend())
+    #expect(try keyword.interpretReport(question) == expected)
+
+    // The on-device model answered with a current-month search and a plural category name.
+    let apple = AppleFoundationModelBackend(
+        availabilityProvider: { nil },
+        reportGenerator: { _, _ in
+            GeneratedReportIntent(operation: .search, measure: .spending, categoryName: "Restaurants")
+        }
+    )
+    #expect(try await Interpreter(ledger: ledger, today: today, backend: apple).interpretReportAsync(question) == expected)
+}
+
+@Test func periodPhrasesResolveToDateRanges() async throws {
+    let ledger = try Ledger.openInMemory()
+    let today = try #require(ReportingDate(iso8601: "2026-11-14"))
+    let keyword = Interpreter(ledger: ledger, today: today, backend: KeywordLanguageModelBackend())
+    func range(_ question: String) throws -> DateRange? {
+        guard case .operation(.total(let query)) = try keyword.interpretReport(question) else { return nil }
+        return query.range
+    }
+    func date(_ iso: String) throws -> ReportingDate { try #require(ReportingDate(iso8601: iso)) }
+
+    #expect(try range("how much did I spend last year") == DateRange(start: try date("2025-01-01"), end: try date("2025-12-31")))
+    #expect(try range("how much did I spend in March") == DateRange(start: try date("2026-03-01"), end: try date("2026-03-31")))
+    #expect(try range("how much did I spend in December") == DateRange(start: try date("2025-12-01"), end: try date("2025-12-31")))
+    #expect(try range("how much did I spend in the last 3 months") == DateRange(start: try date("2026-09-01"), end: today))
+    #expect(try range("how much did I spend this month") == nil)
 }

@@ -164,12 +164,9 @@ public struct KeywordLanguageModelBackend: LanguageModelBackend {
             return .operation(.comparison(measure: measure, categoryID: categoryID, payeeName: payeeName))
         }
 
-        let range = parsedRange(in: lower, today: context.today)
+        let range = QuestionPeriod.range(in: lower, today: context.today)
 
-        if lower.contains("by category") || lower.contains("over month") || lower.contains("each month") || lower.contains("breakdown") {
-            let grouping: Grouping = (lower.contains("over month") || lower.contains("each month")) && lower.contains("by category")
-                ? .monthAndCategory
-                : (lower.contains("over month") || lower.contains("each month") ? .month : .category)
+        if let grouping = QuestionPeriod.grouping(in: lower) ?? (lower.contains("breakdown") ? .category : nil) {
             return .operation(.breakdown(ReportQuery(
                 measure: measure,
                 range: range,
@@ -248,33 +245,6 @@ public struct KeywordLanguageModelBackend: LanguageModelBackend {
             names.append(KnownName(name: alias, kind: .payee, categoryID: nil))
         }
         return names
-    }
-
-    private func parsedRange(in lower: String, today: ReportingDate) -> DateRange? {
-        if lower.contains("last month") {
-            var year = today.year
-            var month = today.month - 1
-            if month == 0 {
-                month = 12
-                year -= 1
-            }
-            let last = ReportingDate.dayCount(month: month, year: year)
-            if let start = ReportingDate(year: year, month: month, day: 1),
-               let end = ReportingDate(year: year, month: month, day: last) {
-                return DateRange(start: start, end: end)
-            }
-        }
-        if let match = lower.range(of: #"\b\d{4}-\d{2}\b"#, options: .regularExpression) {
-            let parts = lower[match].split(separator: "-")
-            if parts.count == 2, let year = Int(parts[0]), let month = Int(parts[1]), (1...12).contains(month) {
-                let last = ReportingDate.dayCount(month: month, year: year)
-                if let start = ReportingDate(year: year, month: month, day: 1),
-                   let end = ReportingDate(year: year, month: month, day: last) {
-                    return DateRange(start: start, end: end)
-                }
-            }
-        }
-        return nil
     }
 
     private func firstAmount(in text: String) -> Cents? {
