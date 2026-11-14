@@ -4,7 +4,7 @@
 
 **Blocked by:** 06
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 - [ ] Chips show the top eight payees by entry count for the selected kind
 - [ ] Tapping a chip fills payee, category and last-used account; the amount field takes focus
