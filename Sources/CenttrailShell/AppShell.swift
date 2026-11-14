@@ -353,7 +353,7 @@ struct SettingsScreen: View {
         NavigationStack {
             List {
                 NavigationLink("Payees") {
-                    PeopleScreen(model: model)
+                    PayeesScreen(model: model)
                 }
                 NavigationLink("Trash") {
                     TrashScreen(model: model)
@@ -367,11 +367,11 @@ struct SettingsScreen: View {
     }
 }
 
-struct PeopleScreen: View {
+struct PayeesScreen: View {
     @ObservedObject var model: CaptureModel
-    @State private var people: [Payee] = []
-    @State private var aliasName = ""
-    @State private var aliasTarget: Payee.ID?
+    @State private var payees: [Payee] = []
+    @State private var mergeSource: Payee.ID?
+    @State private var mergeTarget: Payee.ID?
     @State private var message: String?
 
     var body: some View {
@@ -383,37 +383,50 @@ struct PeopleScreen: View {
                 }
             }
             Section("Payees") {
-                ForEach(people) { person in
-                    Picker(person.name, selection: binding(for: person)) {
-                        Text("None").tag(Optional<LedgerCategoryID>.none)
-                        ForEach(model.categories) { category in
-                            Text(category.name).tag(Optional(category.id))
+                if payees.isEmpty {
+                    Text("No payees yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(payees) { payee in
+                        Picker(payee.name, selection: binding(for: payee)) {
+                            Text("None").tag(Optional<LedgerCategoryID>.none)
+                            ForEach(model.categories) { category in
+                                Text(category.name).tag(Optional(category.id))
+                            }
                         }
                     }
                 }
             }
-            Section("Confirm alias") {
-                TextField("Alias name", text: $aliasName)
-                Picker("Payee", selection: $aliasTarget) {
-                    Text("Select").tag(Optional<Payee.ID>.none)
-                    ForEach(people) { person in
-                        Text(person.name).tag(Optional(person.id))
+            if payees.count >= 2 {
+                Section("Merge payees") {
+                    Picker("Merge", selection: $mergeSource) {
+                        Text("Select").tag(Optional<Payee.ID>.none)
+                        ForEach(payees) { payee in
+                            Text(payee.name).tag(Optional(payee.id))
+                        }
                     }
+                    Picker("Into", selection: $mergeTarget) {
+                        Text("Select").tag(Optional<Payee.ID>.none)
+                        ForEach(payees.filter { $0.id != mergeSource }) { payee in
+                            Text(payee.name).tag(Optional(payee.id))
+                        }
+                    }
+                    Button("Merge payees", action: merge)
+                        .disabled(mergeSource == nil || mergeTarget == nil || mergeSource == mergeTarget)
                 }
-                Button("Confirm alias", action: confirm)
             }
         }
         .navigationTitle("Payees")
         .onAppear(perform: reload)
     }
 
-    private func binding(for person: Payee) -> Binding<LedgerCategoryID?> {
+    private func binding(for payee: Payee) -> Binding<LedgerCategoryID?> {
         Binding(
-            get: { person.defaultCategory?.id },
+            get: { payee.defaultCategory?.id },
             set: { newValue in
                 do {
                     if let newValue {
-                        try model.ledger.setDefaultCategory(newValue, for: person.id)
+                        try model.ledger.setDefaultCategory(newValue, for: payee.id)
                     }
                     message = nil
                     reload()
@@ -424,14 +437,15 @@ struct PeopleScreen: View {
         )
     }
 
-    private func confirm() {
-        guard let aliasTarget else {
-            message = "Select a payee first."
+    private func merge() {
+        guard let mergeSource, let mergeTarget else {
+            message = "Select two payees to merge."
             return
         }
         do {
-            try model.ledger.confirmAlias(aliasName, of: aliasTarget)
-            aliasName = ""
+            try model.ledger.mergePayees(sourceID: mergeSource, into: mergeTarget)
+            self.mergeSource = nil
+            self.mergeTarget = nil
             message = nil
             reload()
         } catch {
@@ -441,7 +455,7 @@ struct PeopleScreen: View {
 
     private func reload() {
         do {
-            people = try model.ledger.payees()
+            payees = try model.ledger.payees()
             try model.reloadFromOutside()
             message = nil
         } catch {
