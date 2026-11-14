@@ -281,6 +281,7 @@ extension Ledger {
     }
 
     public func trashedEntries(today: ReportingDate) throws -> [TrashedEntry] {
+        try purgeExpiredTrash(today: today)
         let rows = try connection.query(
             """
             \(entrySelectSQL)
@@ -294,6 +295,87 @@ extension Ledger {
             let remaining = max(0, 30 - trashed.wholeDays(until: today))
             return TrashedEntry(transaction: transaction, daysRemaining: remaining)
         }
+    }
+
+
+    @discardableResult
+    public func addCategory(name: String, countsAsSpending: Bool = true) throws -> Category {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw LedgerError(message: "A category needs a name.")
+        }
+        let existing = try connection.query(
+            "SELECT id FROM category WHERE lower(name) = lower(?)",
+            bindings: [.text(trimmed)]
+        )
+        if !existing.isEmpty {
+            throw LedgerError(message: "A category named \"\(trimmed)\" already exists.")
+        }
+        let id = Category.ID(rawValue: UUID())
+        try connection.execute(
+            "INSERT INTO category (id, name, counts_as_spending) VALUES (?, ?, ?)",
+            bindings: [
+                .text(stored(id.rawValue)),
+                .text(trimmed),
+                .integer(countsAsSpending ? 1 : 0),
+            ]
+        )
+        return Category(id: id, name: trimmed, countsAsSpending: countsAsSpending)
+    }
+
+    @discardableResult
+    public func renameCategory(id: Category.ID, to newName: String) throws -> Category {
+        let current = try category(id: id)
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw LedgerError(message: "A category needs a name.")
+        }
+        let duplicate = try connection.query(
+            "SELECT id FROM category WHERE lower(name) = lower(?) AND id != ?",
+            bindings: [.text(trimmed), .text(stored(id.rawValue))]
+        )
+        if !duplicate.isEmpty {
+            throw LedgerError(message: "A category named \"\(trimmed)\" already exists.")
+        }
+        try connection.execute(
+            "UPDATE category SET name = ? WHERE id = ?",
+            bindings: [.text(trimmed), .text(stored(id.rawValue))]
+        )
+        return Category(id: id, name: trimmed, countsAsSpending: current.countsAsSpending)
+    }
+
+    public func removeCategory(id: Category.ID) throws {
+        let current = try category(id: id)
+        let entryRows = try connection.query(
+            "SELECT COUNT(*) FROM entry WHERE category_id = ?",
+            bindings: [.text(stored(id.rawValue))]
+        )
+        let entryCount = Int(entryRows.first?.first?.integer ?? 0)
+        if entryCount > 0 {
+            let noun = entryCount == 1 ? "transaction" : "transactions"
+            let verb = entryCount == 1 ? "uses" : "use"
+            throw LedgerError(
+                message: "Cannot remove \"\(current.name)\" because \(entryCount) \(noun) \(verb) it."
+            )
+        }
+        let payeeRows = try connection.query(
+            "SELECT COUNT(*) FROM counterparty WHERE default_category_id = ?",
+            bindings: [.text(stored(id.rawValue))]
+        )
+        let proposedRows = try connection.query(
+            "SELECT COUNT(*) FROM proposed_payee_default WHERE category_id = ?",
+            bindings: [.text(stored(id.rawValue))]
+        )
+        let payeeCount = Int(payeeRows.first?.first?.integer ?? 0) + Int(proposedRows.first?.first?.integer ?? 0)
+        if payeeCount > 0 {
+            throw LedgerError(
+                message: "Cannot remove \"\(current.name)\" because it is the default category for a payee."
+            )
+        }
+        try connection.execute(
+            "DELETE FROM category WHERE id = ?",
+            bindings: [.text(stored(id.rawValue))]
+        )
     }
 
     private func trashedOn(_ id: Transaction.ID) throws -> ReportingDate? {
