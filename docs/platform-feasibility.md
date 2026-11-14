@@ -63,6 +63,36 @@ Live CloudKit sync requires signed app targets with iCloud/CloudKit entitlements
 - [ ] **Trash and restore**: Trash an entry on iPhone Air and confirm it leaves active lists/reports on Mac; restore it from Trash on Mac and confirm it returns on iPhone Air.
 - [ ] **Payee default + per-entry override**: Change a payee's default category on Mac while setting a per-entry category override on one of that payee's entries on iPhone Air; sync both and confirm inherited entries adopt the new default while the overridden entry keeps its override.
 
+### Ledger on the synced store (ticket 04): owner's two-device steps
+
+Ticket 04 moved the `Ledger` onto SQLiteData and wired `SyncEngine` into the app targets. The Ledger test suite runs against the new store (including with the sync engine attached, using SQLiteData's test CloudKit stand-in), but live CloudKit was not exercised: these steps are for the owner and have not been run.
+
+How sync is switched on:
+
+- `Apps/project.yml` gives both apps the iCloud (CloudKit) capability for container `iCloud.com.tejaskale.centtrail`, push (`aps-environment`), the iOS `remote-notification` background mode, and outgoing network access in the Mac sandbox.
+- Both apps carry the Info.plist key `CenttrailCloudKitContainer`. The shell opens the ledger with sync only when that key is present, so `swift run Centtrail` and the tests stay local.
+- Open screens refresh whenever the ledger changes, including changes pulled in from the other device.
+
+Before the first run:
+
+1. In the Apple Developer portal, create the CloudKit container `iCloud.com.tejaskale.centtrail` and enable iCloud (CloudKit) and Push Notifications on the `com.tejaskale.centtrail` App ID. Xcode's automatic signing can do this on the first signed build.
+2. `cd Apps && xcodegen generate`. On the first build, Xcode asks you to trust the SQLiteData macro packages (swift-structured-queries, swift-perception); trust them. Command-line builds need `-skipMacroValidation`. Then build and run the signed `CenttrailIOS` scheme on the iPhone Air and the `CenttrailMac` scheme on the Mac. Both must be signed into the same iCloud account with iCloud Drive on.
+3. Delete any 1.0 install first: v2 starts from an empty ledger and does not migrate 1.0 data.
+
+Checks:
+
+- [ ] **Fresh install**: On each device, the first launch shows an empty ledger. Settings → Categories lists the owner's 26 categories once, with no duplicates after both devices have synced.
+- [ ] **iPhone → Mac**: With both apps open, add an expense on the iPhone. Within about a minute it appears on the Mac's Home (last five, this month's total) without relaunching.
+- [ ] **Mac → iPhone**: Add an income on the Mac (Cmd-N). It appears on the iPhone's Home.
+- [ ] **Offline capture**: Turn on Airplane Mode on the iPhone. Add one transaction, edit another's category, and delete a third. All three work immediately offline. Turn Airplane Mode off; within a minute the Mac shows all three changes.
+- [ ] **Offline on the Mac**: Repeat the step above with Wi-Fi off on the Mac and check the iPhone.
+- [ ] **Last edit wins**: Put both devices offline, change the same transaction's category on each (iPhone first, then Mac), reconnect both. Both devices settle on the Mac's choice with no prompt.
+- [ ] **Trash and restore**: Delete a transaction on the iPhone; it disappears from the Mac's lists and totals. Restore it from Recently deleted on the Mac; it returns on the iPhone.
+- [ ] **Categories, payees and defaults**: Add a category on the Mac, change a payee's default category on the iPhone, and merge two payees on the Mac. Each change shows on the other device.
+- [ ] **CSV import**: Import the owner's CSV on one device. All transactions appear on the other device; the totals for one past month match on both.
+
+Known limit: seeded categories use the same ID on every device, so a fresh install never duplicates them. But a device installed later seeds each category again with its original name. That re-seed can revert a rename of a seeded category, or bring back a removed one, made on another device. If that happens, rename or remove the category again.
+
 ## Ask on Apple Foundation Models evaluation (2026-11-14)
 
 - **Runtime availability & fallback**: `AppleFoundationModelBackend` reads `SystemLanguageModel.default.availability` at runtime (`.available`, `.unavailable(.deviceNotEligible)`, `.unavailable(.appleIntelligenceNotEnabled)`, `.unavailable(.modelNotReady)`). When unavailable, `Interpreter` falls back to `KeywordLanguageModelBackend` and `AskScreen` displays a reason-specific note alongside the preset chips; when available, no unavailable note is shown.

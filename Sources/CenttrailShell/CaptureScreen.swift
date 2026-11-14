@@ -28,6 +28,8 @@ final class CaptureModel: ObservableObject {
     private var applyingPrefill = false
     private var categoryChosenManually = false
     nonisolated(unsafe) private var newEntryObserver: NSObjectProtocol?
+    private var ledgerObservation: LedgerObservation?
+    private var reloadScheduled = false
 
     init(ledger: Ledger, today: ReportingDate) throws {
         self.ledger = ledger
@@ -43,6 +45,11 @@ final class CaptureModel: ObservableObject {
         }
         if CenttrailEntryTrigger.shared.consumePendingNewEntry() {
             openAddSheet()
+        }
+        // Edits pulled in by iCloud sync land in the ledger without passing
+        // through this model, so refresh whenever the ledger changes.
+        ledgerObservation = ledger.observeChanges { [weak self] in
+            Task { @MainActor in self?.scheduleReload() }
         }
     }
 
@@ -99,7 +106,10 @@ final class CaptureModel: ObservableObject {
         )
         let directory = support.appendingPathComponent("Centtrail", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let ledger = try Ledger.open(at: directory.appendingPathComponent("ledger.sqlite"))
+        let ledger = try Ledger.open(
+            at: directory.appendingPathComponent("ledger.sqlite"),
+            sync: LedgerSyncSettings.syncMode(infoDictionary: Bundle.main.infoDictionary ?? [:])
+        )
         guard let today = civilDate(Date(), calendar: .current) else {
             throw CalendarDateError()
         }
@@ -147,6 +157,19 @@ final class CaptureModel: ObservableObject {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func scheduleReload() {
+        guard !reloadScheduled else { return }
+        reloadScheduled = true
+        Task { @MainActor in
+            reloadScheduled = false
+            do {
+                try reload()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

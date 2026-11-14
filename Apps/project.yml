@@ -45,6 +45,19 @@ targets:
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+    # The shell syncs the ledger through the CloudKit container named by
+    # CenttrailCloudKitContainer; without the key (swift run, tests) it stays local.
+    info:
+      path: iOS/Info.plist
+      properties:
+        CenttrailCloudKitContainer: iCloud.com.tejaskale.centtrail
+        UIBackgroundModes: [remote-notification]
+    entitlements:
+      path: iOS/Centtrail.entitlements
+      properties:
+        aps-environment: development
+        com.apple.developer.icloud-services: [CloudKit]
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.tejaskale.centtrail]
   CenttrailMac:
     type: application
     platform: macOS
@@ -59,11 +72,20 @@ targets:
       base:
         ENABLE_HARDENED_RUNTIME: YES
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.finance
+    info:
+      path: macOS/Info.plist
+      properties:
+        CenttrailCloudKitContainer: iCloud.com.tejaskale.centtrail
     entitlements:
       path: macOS/Centtrail.entitlements
       properties:
-        # The ledger lives in the sandbox container's Application Support; no other file or network access.
+        # The ledger lives in the sandbox container's Application Support; the only network use is iCloud sync.
         com.apple.security.app-sandbox: true
+        # iCloud sync of the ledger through CloudKit.
+        com.apple.security.network.client: true
+        com.apple.developer.aps-environment: development
+        com.apple.developer.icloud-services: [CloudKit]
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.tejaskale.centtrail]
 
   CenttrailControls:
     type: app-extension

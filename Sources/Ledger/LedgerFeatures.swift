@@ -150,8 +150,7 @@ extension Ledger {
 
     public func setDefaultCategory(_ categoryID: Category.ID, for payeeID: Payee.ID) throws {
         _ = try category(id: categoryID)
-        try connection.execute("BEGIN")
-        do {
+        try connection.inTransaction {
             try connection.execute(
                 "UPDATE counterparty SET default_category_id = ? WHERE id = ?",
                 bindings: [.text(stored(categoryID.rawValue)), .text(stored(payeeID.rawValue))]
@@ -169,18 +168,13 @@ extension Ledger {
                 "DELETE FROM proposed_payee_default WHERE counterparty_id = ?",
                 bindings: [.text(stored(payeeID.rawValue))]
             )
-            try connection.execute("COMMIT")
-        } catch {
-            try? connection.execute("ROLLBACK")
-            throw error
         }
     }
 
     public func setCategory(_ categoryID: Category.ID, for entryID: Transaction.ID) throws {
         _ = try category(id: categoryID)
         _ = try transaction(id: entryID)
-        try connection.execute("BEGIN")
-        do {
+        try connection.inTransaction {
             try connection.execute(
                 """
                 UPDATE entry
@@ -189,10 +183,6 @@ extension Ledger {
                 """,
                 bindings: [.text(stored(categoryID.rawValue)), .text(stored(entryID.rawValue))]
             )
-            try connection.execute("COMMIT")
-        } catch {
-            try? connection.execute("ROLLBACK")
-            throw error
         }
     }
 
@@ -220,16 +210,11 @@ extension Ledger {
             if owner == payeeID.rawValue { return }
             throw LedgerError(message: "That alias already belongs to another payee.")
         }
-        try connection.execute("BEGIN")
-        do {
+        try connection.inTransaction {
             if let other = try resolvePayeeID(named: trimmed), other != payeeID.rawValue {
                 try reassignPayeeRecords(from: other, to: payeeID.rawValue)
             }
             try insertAliasIfAbsent(trimmed, for: payeeID.rawValue)
-            try connection.execute("COMMIT")
-        } catch {
-            try? connection.execute("ROLLBACK")
-            throw error
         }
     }
 
@@ -241,16 +226,11 @@ extension Ledger {
         }
         let source = try requirePayee(id: sourceID.rawValue)
         let target = try requirePayee(id: targetID.rawValue)
-        try connection.execute("BEGIN")
-        do {
+        try connection.inTransaction {
             try reassignPayeeRecords(from: source.id.rawValue, to: target.id.rawValue)
             if source.name != target.name {
                 try insertAliasIfAbsent(source.name, for: target.id.rawValue)
             }
-            try connection.execute("COMMIT")
-        } catch {
-            try? connection.execute("ROLLBACK")
-            throw error
         }
     }
 
