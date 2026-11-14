@@ -281,6 +281,12 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
             return .unsupported(Interpreter.supportedExplanation)
         }
 
+        let lowerQuestion = question.lowercased()
+        if (lowerQuestion.contains("vs") || lowerQuestion.contains("versus") || lowerQuestion.contains("compared")),
+           hasUnsupportedComparisonPeriod(question) {
+            return .unsupported(unsupportedComparisonExplanation)
+        }
+
         // Validate date range: either both nil (current month default) or both valid YYYY-MM-DD with start.iso8601 <= end.iso8601.
         let range: DateRange?
         switch (trimmedNonEmpty(intent.startDate), trimmedNonEmpty(intent.endDate)) {
@@ -347,6 +353,9 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
             )))
 
         case .comparison:
+            guard range == nil, !hasUnsupportedComparisonPeriod(question) else {
+                return .unsupported(unsupportedComparisonExplanation)
+            }
             return .operation(.comparison(
                 measure: measure,
                 categoryID: categoryID,
@@ -356,10 +365,9 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
         case .search:
             let amountCondition: AmountCondition?
             if let comparison = intent.amountComparison {
-                guard let euros = intent.amountEuros, euros.isFinite, euros >= 0 else {
+                guard let euros = intent.amountEuros, let cents = Cents(roundedEuros: euros) else {
                     return .unsupported("I couldn't understand the amount filter in that question.")
                 }
-                let cents = Cents(Int((euros * 100.0).rounded()))
                 switch comparison {
                 case .greaterThan:
                     amountCondition = .greaterThan(cents)
@@ -369,10 +377,10 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
                     amountCondition = .equal(cents)
                 }
             } else if let euros = intent.amountEuros {
-                guard euros.isFinite, euros >= 0 else {
+                guard let cents = Cents(roundedEuros: euros) else {
                     return .unsupported("I couldn't understand the amount filter in that question.")
                 }
-                amountCondition = .equal(Cents(Int((euros * 100.0).rounded())))
+                amountCondition = .equal(cents)
             } else {
                 amountCondition = nil
             }
@@ -394,8 +402,8 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
         context: InterpretationContext
     ) -> EntryDraft {
         let amount: Cents?
-        if let euros = generated.amountEuros, euros.isFinite, euros > 0 {
-            amount = Cents(Int((euros * 100.0).rounded()))
+        if let euros = generated.amountEuros, euros > 0 {
+            amount = Cents(roundedEuros: euros)
         } else {
             amount = nil
         }
@@ -549,6 +557,7 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
     Never invent numbers or execute mutations (add, delete, edit, merge, import).
     For mutation requests or questions outside spending/income totals, breakdowns, comparisons, or transaction searches, return operation = unsupported.
     If no date period is mentioned, leave startDate and endDate nil (which defaults to the current calendar month).
+    Comparisons support this month against matching elapsed days of last month only. For that comparison leave dates nil; return unsupported for other comparison periods.
     Only use categoryName from the provided categories list and payeeName from the provided payees/aliases list.
     """
 

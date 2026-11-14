@@ -191,3 +191,25 @@ import Testing
     #expect(result.importedCount == 0)
     #expect(result.skippedCount == 2)
 }
+
+@Test func malformedCSVIsRefusedWithAnActionableError() throws {
+    let ledger = try Ledger.openInMemory()
+    #expect(throws: LedgerError.self) { try ledger.previewImport("Date,Date\n2026-11-01,2026-11-02") }
+    #expect(throws: LedgerError.self) { try ledger.previewImport("Payee,Amount\nREWE,10.00") }
+    #expect(throws: LedgerError.self) { try ledger.previewImport("Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account\n2026-11-01,10.00") }
+    #expect(throws: LedgerError.self) { try ledger.previewImport("Date,Amount\n\"unterminated") }
+    #expect(try ledger.transactions().isEmpty)
+}
+
+@Test func quotedCSVFieldsKeepEscapedQuotesAndCommas() throws {
+    let ledger = try Ledger.openInMemory()
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-01,-10.00,EUR,EUR,1.0,"Cafe ""Berlin"", Mitte",Restaurant,Cash,"Coffee, cake"
+    """
+    let result = try ledger.commitImport(csv)
+    #expect(result.importedCount == 1)
+    let entry = try #require(try ledger.transactions().first)
+    #expect(entry.payee?.name == "Cafe \"Berlin\", Mitte")
+    #expect(entry.note == "Coffee, cake")
+}

@@ -62,7 +62,16 @@ public final class Ledger {
         try record(draft, proposeDefaultForNewPayee: false)
     }
 
-    func record(_ draft: EntryDraft, proposeDefaultForNewPayee: Bool) throws -> Transaction {
+    /// Replaces the editable fields in one transaction, preserving identity,
+    /// import history and trash state. Validation is shared with capture.
+    public func update(_ id: Transaction.ID, with draft: EntryDraft) throws -> Transaction {
+        try connection.inTransaction {
+            _ = try transaction(id: id)
+            return try record(draft, proposeDefaultForNewPayee: false, entryID: id.rawValue)
+        }
+    }
+
+    func record(_ draft: EntryDraft, proposeDefaultForNewPayee: Bool, entryID: UUID = UUID()) throws -> Transaction {
         let payeeName = draft.payee?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var missing: Set<EntryField> = []
         if draft.amount == nil { missing.insert(.amount) }
@@ -82,7 +91,6 @@ public final class Ledger {
         }
 
         _ = try account(id: accountID)
-        let entryID = UUID()
         if kind == .transfer {
             guard let destinationID = draft.destinationAccountID else { throw RecordEntryError.incomplete([.destinationAccount]) }
             _ = try account(id: destinationID)
@@ -222,7 +230,7 @@ public final class Ledger {
 
     func category(id: Category.ID) throws -> Category {
         let rows = try connection.query(
-            "SELECT name, counts_as_spending FROM category WHERE id = ?",
+            "SELECT name, counts_as_spending FROM effective_category WHERE id = ? AND is_removed = 0",
             bindings: [.text(stored(id.rawValue))]
         )
         guard let name = rows.first?.first?.text, let spending = rows.first?.dropFirst().first?.integer else {
@@ -236,7 +244,7 @@ public final class Ledger {
     }
 
     public func categories() throws -> [Category] {
-        let rows = try connection.query("SELECT id, name, counts_as_spending FROM category ORDER BY rowid")
+        let rows = try connection.query("SELECT id, name, counts_as_spending FROM effective_category WHERE is_removed = 0 ORDER BY rowid")
         return try rows.map { row in
             guard row.count == 3,
                   let idText = row[0].text,

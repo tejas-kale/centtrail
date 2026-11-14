@@ -150,3 +150,26 @@ private func openSyncedLedger() throws -> Ledger {
         sync: .enabled(containerIdentifier: "iCloud.com.tejaskale.centtrail")
     )
 }
+
+@Test func starterReferenceCustomizationsSurviveRepeatedBootstrap() throws {
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("centtrail-customized-\(UUID().uuidString).sqlite")
+    let ledger = try Ledger.open(at: file)
+    let removed = try namedCategory(ledger, "Vacation")
+    let renamed = try namedCategory(ledger, "Supermarket")
+    let accounts = try ledger.accounts()
+    try ledger.removeCategory(id: removed.id)
+    _ = try ledger.renameCategory(id: renamed.id, to: "Groceries")
+    try ledger.removeAccount(id: accounts[2].id)
+    _ = try ledger.renameAccount(id: accounts[0].id, to: "Everyday")
+    let entry = try ledger.record(EntryDraft(amount: Cents(1250), kind: .expense, payee: "REWE", reportingDate: ReportingDate(iso8601: "2026-11-14"), categoryID: renamed.id, accountID: accounts[0].id))
+    // Every open runs the same immutable bootstrap used by a fresh installation.
+    for _ in 0..<3 {
+        let reopened = try Ledger.open(at: file)
+        #expect(try !reopened.categories().contains { $0.id == removed.id })
+        #expect(try reopened.categories().first { $0.id == renamed.id }?.name == "Groceries")
+        #expect(try !reopened.accounts().contains { $0.id == accounts[2].id })
+        #expect(try reopened.transaction(id: entry.id).category?.name == "Groceries")
+        #expect(try reopened.transaction(id: entry.id).account.name == "Everyday")
+        #expect(try reopened.homeSummary(on: try #require(ReportingDate(iso8601: "2026-11-14"))).categories.first?.category.name == "Groceries")
+    }
+}

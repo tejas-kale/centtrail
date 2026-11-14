@@ -29,7 +29,18 @@ public struct Cents: Hashable, Sendable {
             fraction = 0
         }
 
-        self.init(euros * 100 + fraction)
+        let (wholeCents, multiplyOverflow) = euros.multipliedReportingOverflow(by: 100)
+        let (cents, addOverflow) = wholeCents.addingReportingOverflow(fraction)
+        guard !multiplyOverflow, !addOverflow else { return nil }
+        self.init(cents)
+    }
+
+    /// Converts a model's euro value, rounding to the nearest cent. Invalid
+    /// or unrepresentable values require correction instead of trapping.
+    public init?(roundedEuros: Double) {
+        guard roundedEuros.isFinite, roundedEuros >= 0,
+              let cents = Int(exactly: (roundedEuros * 100).rounded()) else { return nil }
+        self.init(cents)
     }
 
     private static func digits(_ text: Substring) -> Int? {

@@ -1,3 +1,4 @@
+import AppIntents
 import CenttrailShell
 import SwiftUI
 
@@ -9,5 +10,11 @@ struct CenttrailIOSApp: App {
         WindowGroup {
             CaptureRoot()
         }
+    }
+}
+
+struct HostAppIntentsPackage: AppIntentsPackage {
+    static var includedPackages: [any AppIntentsPackage.Type] {
+        [CenttrailAppIntentsPackage.self]
     }
 }

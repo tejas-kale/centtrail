@@ -141,6 +141,7 @@ public struct KeywordLanguageModelBackend: LanguageModelBackend {
         let measure: Measure = lower.contains("income") || lower.contains("earned") ? .income : .spending
 
         if lower.contains("vs") || lower.contains("versus") || lower.contains("compared") {
+            guard !hasUnsupportedComparisonPeriod(lower) else { return .unsupported(unsupportedComparisonExplanation) }
             return .operation(.comparison(measure: measure, categoryID: categoryID, payeeName: payeeName))
         }
 
@@ -457,4 +458,14 @@ public struct Interpreter {
         if actual.grouping != expected.grouping { mismatches.append("grouping") }
         return InterpretationScore(operationMatches: operationMatches, argumentMismatches: mismatches)
     }
+}
+
+let unsupportedComparisonExplanation = "Comparisons currently support this month against the same days of last month. Ask for a total or breakdown for another date range."
+
+func hasUnsupportedComparisonPeriod(_ question: String) -> Bool {
+    let remainder = question.lowercased()
+        .replacingOccurrences(of: "this month", with: "")
+        .replacingOccurrences(of: "last month", with: "")
+    let pattern = #"\d{4}|\d{1,2}[/.-]\d{1,2}|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|years?|weeks?|quarters?|days?|months?|today|yesterday|tomorrow|between|since|until)\b"#
+    return remainder.range(of: pattern, options: .regularExpression) != nil
 }

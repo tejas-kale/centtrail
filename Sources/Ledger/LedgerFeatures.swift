@@ -20,10 +20,10 @@ SELECT
     account.id, account.name, destination.id, destination.name
 FROM entry
 LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
-LEFT JOIN category AS entry_category ON entry_category.id = entry.category_id
-LEFT JOIN category AS default_category ON default_category.id = counterparty.default_category_id
-JOIN account ON account.id = entry.account_id
-LEFT JOIN account AS destination ON destination.id = entry.destination_account_id
+LEFT JOIN effective_category AS entry_category ON entry_category.id = entry.category_id
+LEFT JOIN effective_category AS default_category ON default_category.id = counterparty.default_category_id
+JOIN effective_account AS account ON account.id = entry.account_id
+LEFT JOIN effective_account AS destination ON destination.id = entry.destination_account_id
 """
 
 extension Ledger {
@@ -45,6 +45,12 @@ extension Ledger {
                 id, amount_cents, kind, counterparty_id, reporting_date, category_id,
                 category_provenance, note, account_id, destination_account_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                amount_cents = excluded.amount_cents, kind = excluded.kind,
+                counterparty_id = excluded.counterparty_id, reporting_date = excluded.reporting_date,
+                category_id = excluded.category_id, category_provenance = excluded.category_provenance,
+                note = excluded.note, account_id = excluded.account_id,
+                destination_account_id = excluded.destination_account_id
             """,
             bindings: [
                 .text(stored(id)),
@@ -115,7 +121,7 @@ extension Ledger {
             """
             SELECT counterparty.id, counterparty.name, category.id, category.name, category.counts_as_spending
             FROM counterparty
-            LEFT JOIN category ON category.id = counterparty.default_category_id
+            LEFT JOIN effective_category AS category ON category.id = counterparty.default_category_id
             ORDER BY counterparty.name
             """
         )
@@ -244,6 +250,20 @@ extension Ledger {
     }
 
     private func reassignPayeeRecords(from sourceID: UUID, to targetID: UUID) throws {
+        let target = try requirePayee(id: targetID)
+        if let category = target.defaultCategory {
+            try connection.execute(
+                "UPDATE entry SET category_id = ? WHERE counterparty_id = ? AND category_provenance = 'inherited'",
+                bindings: [.text(stored(category.id.rawValue)), .text(stored(sourceID))]
+            )
+        } else {
+            // A payee awaiting import-default acceptance has no category to
+            // inherit. Keep the source classification as an explicit choice.
+            try connection.execute(
+                "UPDATE entry SET category_provenance = 'overridden' WHERE counterparty_id = ? AND category_provenance = 'inherited'",
+                bindings: [.text(stored(sourceID))]
+            )
+        }
         try connection.execute(
             "UPDATE entry SET counterparty_id = ? WHERE counterparty_id = ?",
             bindings: [.text(stored(targetID)), .text(stored(sourceID))]
@@ -328,7 +348,7 @@ extension Ledger {
             throw LedgerError(message: "A category needs a name.")
         }
         let existing = try connection.query(
-            "SELECT id FROM category WHERE lower(name) = lower(?)",
+            "SELECT id FROM effective_category WHERE is_removed = 0 AND lower(name) = lower(?)",
             bindings: [.text(trimmed)]
         )
         if !existing.isEmpty {
@@ -354,16 +374,13 @@ extension Ledger {
             throw LedgerError(message: "A category needs a name.")
         }
         let duplicate = try connection.query(
-            "SELECT id FROM category WHERE lower(name) = lower(?) AND id != ?",
+            "SELECT id FROM effective_category WHERE is_removed = 0 AND lower(name) = lower(?) AND id != ?",
             bindings: [.text(trimmed), .text(stored(id.rawValue))]
         )
         if !duplicate.isEmpty {
             throw LedgerError(message: "A category named \"\(trimmed)\" already exists.")
         }
-        try connection.execute(
-            "UPDATE category SET name = ? WHERE id = ?",
-            bindings: [.text(trimmed), .text(stored(id.rawValue))]
-        )
+        try renameReference(id.rawValue, to: trimmed)
         return Category(id: id, name: trimmed, countsAsSpending: current.countsAsSpending)
     }
 
@@ -395,10 +412,7 @@ extension Ledger {
                 message: "Cannot remove \"\(current.name)\" because it is the default category for a payee."
             )
         }
-        try connection.execute(
-            "DELETE FROM category WHERE id = ?",
-            bindings: [.text(stored(id.rawValue))]
-        )
+        try removeReference(id.rawValue)
     }
 
     private func trashedOn(_ id: Transaction.ID) throws -> ReportingDate? {
