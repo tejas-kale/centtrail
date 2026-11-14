@@ -191,7 +191,7 @@ import Testing
     let ledger = try Ledger.openInMemory()
     _ = try recordEntry(ledger, cents: 100, kind: .expense, payee: "Middle Eats", date: "2026-01-01", category: "Restaurant")
     let today = try #require(ReportingDate(iso8601: "2026-04-10"))
-    let interpreter = Interpreter(ledger: ledger, today: today)
+    let interpreter = Interpreter(ledger: ledger, today: today, backend: KeywordLanguageModelBackend())
     let typed = try interpreter.interpretCapture("20 at Middle Eats yesterday")
     #expect(typed == (try interpreter.interpretCapture("20 at Middle Eats yesterday")))
     #expect(typed.modelUnavailable == .modelNotReady)

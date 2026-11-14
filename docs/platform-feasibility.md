@@ -63,6 +63,25 @@ Live CloudKit sync requires signed app targets with iCloud/CloudKit entitlements
 - [ ] **Trash and restore**: Trash an entry on iPhone Air and confirm it leaves active lists/reports on Mac; restore it from Trash on Mac and confirm it returns on iPhone Air.
 - [ ] **Payee default + per-entry override**: Change a payee's default category on Mac while setting a per-entry category override on one of that payee's entries on iPhone Air; sync both and confirm inherited entries adopt the new default while the overridden entry keeps its override.
 
+## Ask on Apple Foundation Models evaluation (2026-11-14)
+
+- **Runtime availability & fallback**: `AppleFoundationModelBackend` reads `SystemLanguageModel.default.availability` at runtime (`.available`, `.unavailable(.deviceNotEligible)`, `.unavailable(.appleIntelligenceNotEnabled)`, `.unavailable(.modelNotReady)`). When unavailable, `Interpreter` falls back to `KeywordLanguageModelBackend` and `AskScreen` displays a reason-specific note alongside the preset chips; when available, no unavailable note is shown.
+- **Guided generation & validation**: `AppleFoundationModelBackend` uses `LanguageModelSession` with `@Generable` (`GeneratedReportIntent` and `GeneratedCaptureDraft`). Every generated intent is validated before execution: inverted or incomplete date ranges, negative/invalid amounts, and unknown categories or payees become plain explanations (`.unsupported`), ambiguous names trigger `.clarification`, and mutation requests are refused.
+- **Evaluation set results (`Tests/LedgerTests/AskEvaluationTests.swift`)**:
+  - **12 representative questions** covering totals (spending/income, current/last month), breakdowns (`category`, `month`, `monthAndCategory`), comparisons, searches with amount filters, ambiguous payee clarification (`Amazon` vs `Amazon Fresh`), out-of-scope questions (`what is my net worth?`), and mutation refusals (`delete all my transactions`).
+  - **Keyword fallback (`KeywordLanguageModelBackend`)**: 12/12 operation accuracy, 12/12 argument accuracy.
+  - **Foundation Models schema + validator (`AppleFoundationModelBackend` with injected `@Generable` fixtures)**: 12/12 operation accuracy, 12/12 argument accuracy, plus verified rejection of invalid date ranges, negative amounts, and unknown categories.
+  - **Host environment**: On this macOS build host, `SystemLanguageModel.default.availability` reports `.unavailable(.deviceNotEligible)`, so live on-device model inference did not execute here.
+
+### Physical iPhone Air timing & accuracy checklist (5–7 second target)
+
+Physical iPhone Air timings (cold and warm end-to-end latency) and live on-device Apple Intelligence accuracy must be measured on device:
+
+- [ ] **Availability check on device**: With Apple Intelligence enabled on iPhone Air, open Ask and confirm the unavailable note is hidden (`unavailableNote == nil`). Toggle Apple Intelligence off in Settings and confirm the unavailable note appears with the expected reason and preset chips still work.
+- [ ] **Cold end-to-end timing (5–7 s target)**: Force-quit and relaunch Centtrail on iPhone Air; submit a representative Ask question (e.g. `"how much did I spend this month?"`) and record wall-clock time from send tap to rendered answer card. Target: `<= 5–7 s`.
+- [ ] **Warm end-to-end timing (5–7 s target)**: Immediately submit a second question in the same session (e.g. `"spent on restaurants compared with last month"`) and record wall-clock time from send tap to rendered answer card. Target: `<= 5–7 s`.
+- [ ] **Live evaluation set run**: Run `appleFoundationModelLiveSmokeAndTimingWhenAvailable` (and the 12-question evaluation set against `AppleFoundationModelBackend()`) on an Apple Intelligence-enabled device and record observed operation/argument accuracy and cold/warm timings here.
+
 ## Local validation boundary
 
 The local `swift test` suite runs and passes on macOS in this workspace, but live CloudKit two-device sync and on-device Foundation Models behavior require signed Apple app targets and physical hardware (iPhone Air and Mac) and were not run in this session.

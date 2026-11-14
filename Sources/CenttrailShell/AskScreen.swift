@@ -49,6 +49,23 @@ public final class AskModel: ObservableObject {
 
     @Published public var inputText: String = ""
     @Published public var messages: [AskMessage] = []
+    @Published public private(set) var isThinking: Bool = false
+
+    public var modelUnavailableReason: ModelUnavailableReason? {
+        interpreter?.modelUnavailableReason
+    }
+
+    public var unavailableNote: String? {
+        guard let reason = interpreter?.modelUnavailableReason else { return nil }
+        switch reason {
+        case .deviceNotEligible:
+            return "On-device model unavailable: this device isn't eligible for Apple Intelligence. Using keyword search and presets."
+        case .appleIntelligenceOff:
+            return "On-device model unavailable: Apple Intelligence is turned off in Settings. Using keyword search and presets."
+        case .modelNotReady:
+            return "On-device model unavailable: the Apple Intelligence model is still downloading or not ready. Using keyword search and presets."
+        }
+    }
 
     public init(ledger: Ledger, today: ReportingDate, interpreter: Interpreter?) {
         self.ledger = ledger
@@ -96,25 +113,56 @@ public final class AskModel: ObservableObject {
             ))
             return
         }
-        do {
-            let interpretation = try interpreter.interpretReport(question, resolvedName: resolvedName)
-            switch interpretation {
-            case .operation(let operation):
-                execute(operation)
-            case .clarification(let options):
-                messages.append(AskMessage(
-                    role: .assistant,
-                    content: .clarification(
-                        question: question,
-                        prompt: "Which one did you mean?",
-                        options: options
-                    )
-                ))
-            case .unsupported(let explanation):
-                messages.append(AskMessage(role: .assistant, content: .text(explanation)))
+        if interpreter.modelUnavailableReason != nil {
+            do {
+                let interpretation = try interpreter.interpretReport(question, resolvedName: resolvedName)
+                handleInterpretation(interpretation, question: question)
+            } catch {
+                messages.append(AskMessage(role: .assistant, content: .text(error.localizedDescription)))
             }
+            return
+        }
+
+        let context: InterpretationContext
+        do {
+            context = try interpreter.makeContext()
         } catch {
             messages.append(AskMessage(role: .assistant, content: .text(error.localizedDescription)))
+            return
+        }
+        let backend = interpreter.backend
+        isThinking = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isThinking = false }
+            do {
+                let interpretation = try await backend.interpretReportAsync(
+                    question,
+                    context: context,
+                    resolvedName: resolvedName
+                )
+                self.handleInterpretation(interpretation, question: question)
+            } catch {
+                self.messages.append(AskMessage(role: .assistant, content: .text(error.localizedDescription)))
+            }
+        }
+    }
+
+    private func handleInterpretation(_ interpretation: ReportInterpretation, question: String) {
+        switch interpretation {
+        case .operation(let operation):
+            execute(operation)
+        case .clarification(let options):
+            messages.append(AskMessage(
+                role: .assistant,
+                content: .clarification(
+                    question: question,
+                    prompt: "Which one did you mean?",
+                    options: options
+                )
+            ))
+        case .unsupported(let explanation):
+            messages.append(AskMessage(role: .assistant, content: .text(explanation)))
         }
     }
 
@@ -254,6 +302,10 @@ struct AskScreen: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if let note = askModel.unavailableNote {
+                    unavailableBanner(note)
+                    Divider()
+                }
                 presetChipsBar
                 Divider()
                 chatThread
@@ -262,6 +314,20 @@ struct AskScreen: View {
             }
             .navigationTitle("Ask")
         }
+    }
+
+    private func unavailableBanner(_ note: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(.secondary)
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.08))
     }
 
     private var presetChipsBar: some View {
@@ -297,6 +363,16 @@ struct AskScreen: View {
                                 askModel.resolveClarification(question: question, choice: choice)
                             }
                             .id(message.id)
+                        }
+                        if askModel.isThinking {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Thinking…")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 4)
                         }
                     }
                 }
