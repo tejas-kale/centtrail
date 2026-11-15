@@ -4,6 +4,7 @@ import SwiftUI
 struct AccountsScreen: View {
     @ObservedObject var model: CaptureModel
     @State private var newName = ""
+    @State private var newCurrency: Currency = .eur
     @State private var renaming: Account?
     @State private var renameText = ""
     @State private var message: String?
@@ -13,8 +14,17 @@ struct AccountsScreen: View {
             if let message { Text(message).foregroundStyle(.red) }
             Section("Add account") {
                 TextField("Name", text: $newName)
+                Picker("Currency", selection: $newCurrency) {
+                    ForEach(Currency.allCases, id: \.self) { currency in
+                        Text(currency.rawValue).tag(currency)
+                    }
+                }
                 Button("Add account") {
-                    perform { _ = try model.ledger.addAccount(name: newName); newName = "" }
+                    perform {
+                        _ = try model.ledger.addAccount(name: newName, currency: newCurrency)
+                        newName = ""
+                        newCurrency = .eur
+                    }
                 }
                 .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -23,6 +33,12 @@ struct AccountsScreen: View {
                     HStack {
                         Text(account.name)
                         Spacer()
+                        Picker("Currency", selection: currencyBinding(for: account)) {
+                            ForEach(Currency.allCases, id: \.self) { currency in
+                                Text(currency.rawValue).tag(currency)
+                            }
+                        }
+                        .labelsHidden()
                         Button("Rename") { renameText = account.name; renaming = account }
                         Button("Remove", role: .destructive) { perform { try model.ledger.removeAccount(id: account.id) } }
                     }
@@ -45,6 +61,15 @@ struct AccountsScreen: View {
                     }
             }
         }
+    }
+
+    private func currencyBinding(for account: Account) -> Binding<Currency> {
+        Binding(
+            get: { account.currency },
+            set: { newValue in
+                perform { _ = try model.ledger.setAccountCurrency(id: account.id, to: newValue) }
+            }
+        )
     }
 
     private func perform(_ action: () throws -> Void) {

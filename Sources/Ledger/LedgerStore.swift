@@ -14,6 +14,9 @@ struct ReferenceCustomizationRecord: Identifiable, Sendable {
 struct AccountRecord: Identifiable, Sendable {
     let id: UUID
     var name: String = ""
+    var currency: String = "EUR"
+    @Column("can_migrate_currency")
+    var canMigrateCurrency: Bool = false
 }
 
 @Table("category")
@@ -277,6 +280,33 @@ final class SQLiteConnection {
         migrator.registerMigration("v4_review_inbox") { db in
             try db.execute(sql: """
                 ALTER TABLE entry ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0;
+                """)
+        }
+        migrator.registerMigration("v4_account_currency") { db in
+            try db.execute(sql: """
+                ALTER TABLE account ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR';
+                ALTER TABLE account ADD COLUMN can_migrate_currency INTEGER NOT NULL DEFAULT 0;
+                UPDATE account SET can_migrate_currency = 1;
+                DROP VIEW IF EXISTS spending;
+                DROP VIEW IF EXISTS effective_account;
+                CREATE VIEW effective_account AS
+                    SELECT account.rowid AS rowid, account.id,
+                        COALESCE(custom.name, account.name) AS name,
+                        account.currency,
+                        COALESCE(custom.is_removed, 0) AS is_removed
+                    FROM account LEFT JOIN reference_customization AS custom ON custom.id = account.id;
+                CREATE VIEW spending AS
+                    SELECT entry.id, entry.reporting_date, entry.amount_cents,
+                        entry.amount_cents / 100.0 AS amount, account.currency AS currency,
+                        counterparty.name AS payee, category.name AS category,
+                        account.name AS account, entry.account_id, entry.category_id,
+                        entry.counterparty_id AS payee_id
+                    FROM entry
+                    JOIN effective_category AS category ON category.id = entry.category_id
+                    JOIN effective_account AS account ON account.id = entry.account_id
+                    LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
+                    WHERE entry.kind = 'expense' AND entry.trashed_on IS NULL
+                        AND category.counts_as_spending = 1;
                 """)
         }
         try migrator.migrate(database)

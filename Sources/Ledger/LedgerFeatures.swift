@@ -17,7 +17,7 @@ SELECT
     entry_category.id,
     entry_category.name,
     entry_category.counts_as_spending,
-    account.id, account.name, destination.id, destination.name,
+    account.id, account.name, account.currency, destination.id, destination.name, destination.currency,
     entry.needs_review
 FROM entry
 LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
@@ -85,7 +85,7 @@ extension Ledger {
     }
 
     func decodeTransaction(_ row: [SQLiteValue]) throws -> Transaction {
-        guard row.count == 20,
+        guard row.count == 22,
               let entryID = row[0].text.flatMap(UUID.init(uuidString:)),
               let cents = row[1].integer,
               let kind = row[2].text.flatMap(Kind.init(rawValue:)),
@@ -93,7 +93,8 @@ extension Ledger {
               let provenance = row[4].text.flatMap(CategoryProvenance.init(rawValue:)),
               let accountID = row[15].text.flatMap(UUID.init(uuidString:)),
               let accountName = row[16].text,
-              let needsReview = row[19].integer
+              let accountCurrency = row[17].text.flatMap(Currency.init(rawValue:)),
+              let needsReview = row[21].integer
         else {
             throw LedgerError(message: "The ledger returned an entry it could not read.")
         }
@@ -104,8 +105,10 @@ extension Ledger {
                 defaultCategory: try category(idText: row[9].text, name: row[10].text, spending: row[11].integer))
         } else { payee = nil }
         let destination: Account?
-        if let id = row[17].text.flatMap(UUID.init(uuidString:)), let name = row[18].text {
-            destination = Account(id: Account.ID(rawValue: id), name: name)
+        if let id = row[18].text.flatMap(UUID.init(uuidString:)),
+           let name = row[19].text,
+           let currency = row[20].text.flatMap(Currency.init(rawValue:)) {
+            destination = Account(id: Account.ID(rawValue: id), name: name, currency: currency)
         } else { destination = nil }
         return Transaction(
             id: Transaction.ID(rawValue: entryID),
@@ -114,7 +117,7 @@ extension Ledger {
             payee: payee,
             reportingDate: reportingDate,
             category: try category(idText: row[12].text, name: row[13].text, spending: row[14].integer),
-            account: Account(id: Account.ID(rawValue: accountID), name: accountName),
+            account: Account(id: Account.ID(rawValue: accountID), name: accountName, currency: accountCurrency),
             destinationAccount: destination,
             categoryProvenance: provenance,
             note: note,

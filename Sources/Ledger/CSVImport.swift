@@ -110,6 +110,7 @@ extension Ledger {
         var amountCents: Int
         var payee: String
         var sourceAccount: String
+        var currency: Currency
         var reportingDate: ReportingDate
         var kind: Kind
         var category: Category
@@ -130,6 +131,7 @@ extension Ledger {
         }
         let records = table.dropFirst()
         let categories = try categories()
+        let existingAccounts = try accounts()
         var classified: [ClassifiedImport] = []
         for (offset, record) in records.enumerated() {
             if record.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { continue }
@@ -156,10 +158,17 @@ extension Ledger {
                 ))
                 continue
             }
-            if fields["Source Currency"]?.trimmingCharacters(in: .whitespacesAndNewlines) != "EUR"
-                || fields["Target Currency"]?.trimmingCharacters(in: .whitespacesAndNewlines) != "EUR"
-                || fields["Exchange Rate"]?.trimmingCharacters(in: .whitespacesAndNewlines) != "1.0" {
-                reasons.append("Only EUR at rate 1.0 can be imported.")
+            let sourceCurrencyText = fields["Source Currency"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let targetCurrencyText = fields["Target Currency"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let exchangeRateText = fields["Exchange Rate"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let sourceCurrency = Currency(rawValue: sourceCurrencyText)
+            let targetCurrency = Currency(rawValue: targetCurrencyText)
+            if sourceCurrency == nil || sourceCurrency != targetCurrency || exchangeRateText != "1.0" {
+                reasons.append("Only EUR or INR at rate 1.0 can be imported.")
+            } else if let sourceCurrency,
+                      let existingAccount = existingAccounts.first(where: { $0.name.caseInsensitiveCompare(sourceAccount) == .orderedSame }),
+                      existingAccount.currency != sourceCurrency {
+                reasons.append("Row currency \(sourceCurrency.rawValue) does not match account \(existingAccount.name) (\(existingAccount.currency.rawValue)).")
             }
             let category = categories.first { $0.name == categoryName }
             if category == nil { reasons.append("Unknown category \(categoryName).") }
@@ -168,7 +177,7 @@ extension Ledger {
             if parsedAmount.cents == 0 { reasons.append("The amount must be greater than zero.") }
             let kind: Kind = parsedAmount.sign < 0 ? .expense : .income
             let rowDate = reportingDate?.iso8601
-            if !reasons.isEmpty || category == nil || reportingDate == nil {
+            if !reasons.isEmpty || category == nil || reportingDate == nil || sourceCurrency == nil {
                 classified.append(ClassifiedImport(
                     row: ImportRow(index: offset, state: .needsCorrection(reasons), reportingDate: rowDate, amountText: amountText, categoryName: categoryName, payee: payee),
                     draft: nil,
@@ -181,6 +190,7 @@ extension Ledger {
                 amountCents: parsedAmount.cents,
                 payee: payee,
                 sourceAccount: sourceAccount,
+                currency: sourceCurrency!,
                 reportingDate: reportingDate!,
                 kind: kind,
                 category: category!,
@@ -291,7 +301,7 @@ extension Ledger {
         if let existing = try accounts().first(where: { $0.name.caseInsensitiveCompare(fingerprint.sourceAccount) == .orderedSame }) {
             draft.accountID = existing.id
         } else {
-            draft.accountID = try addAccount(name: fingerprint.sourceAccount).id
+            draft.accountID = try addAccount(name: fingerprint.sourceAccount, currency: fingerprint.currency).id
         }
         let recorded = try record(draft)
         try connection.execute(

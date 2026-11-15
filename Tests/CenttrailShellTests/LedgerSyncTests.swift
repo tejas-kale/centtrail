@@ -37,7 +37,7 @@ extension SystemEntryPointsTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(model.transactions.map(\.payee!.name) == ["REWE"])
-        #expect(model.monthSummary?.spendingCents == 1250)
+        #expect(model.monthSummary?.spendingByCurrency == [.eur: 1250])
     }
 
     @MainActor
