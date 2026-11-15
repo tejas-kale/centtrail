@@ -83,7 +83,7 @@ public struct RecordEntryIntent: AppIntent {
         )
         do {
             let saved = try ledger.record(completion)
-            let formattedAmount = formatEuro(saved.amount.value)
+            let formattedAmount = formatAmount(saved.amount.value, currency: saved.account.currency)
             let payeeName = saved.payee?.name ?? "Unknown"
             if saved.needsReview {
                 return "Saved \(formattedAmount) at \(payeeName) to review."

@@ -37,6 +37,7 @@ extension Ledger {
             Decimal amount columns divide minor units by 100.0. Blob results are base64 strings.
             Spending means expenses in spending categories, excluding transfers and trashed entries.
             A refund is income and does not reduce spending. Use the spending view for these rules.
+            Use the transfers_with_rate view for transfers with sent/received amounts, currencies and effective_rate.
             Use the budgets view for monthly category budgets and current-month spending in each budget's currency.
             effective_account and effective_category apply renamed/removed reference customizations.
             counterparty means payee; counterparty_alias resolves alternate names to the same payee.

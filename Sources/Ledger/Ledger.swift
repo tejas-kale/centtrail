@@ -88,6 +88,15 @@ public final class Ledger {
         if draft.kind != .transfer, draft.categoryID == nil { missing.insert(.category) }
         if draft.accountID == nil { missing.insert(.account) }
         if draft.kind == .transfer, draft.destinationAccountID == nil { missing.insert(.destinationAccount) }
+        if draft.kind == .transfer,
+           let accountID = draft.accountID,
+           let destinationID = draft.destinationAccountID,
+           let sourceAccount = try? account(id: accountID),
+           let destinationAccount = try? account(id: destinationID),
+           sourceAccount.currency != destinationAccount.currency,
+           draft.receivedAmount == nil {
+            missing.insert(.receivedAmount)
+        }
         guard missing.isEmpty,
               let amount = draft.amount,
               let kind = draft.kind,
@@ -97,18 +106,26 @@ public final class Ledger {
             throw RecordEntryError.incomplete(missing)
         }
 
-        _ = try account(id: accountID)
+        let sourceAccount = try account(id: accountID)
         if kind == .transfer {
             guard let destinationID = draft.destinationAccountID else { throw RecordEntryError.incomplete([.destinationAccount]) }
-            _ = try account(id: destinationID)
+            let destinationAccount = try account(id: destinationID)
             guard accountID != destinationID else { throw LedgerError(message: "Choose two different accounts for a transfer.") }
+            let receivedAmount: Cents
+            if sourceAccount.currency != destinationAccount.currency {
+                guard let received = draft.receivedAmount else { throw RecordEntryError.incomplete([.receivedAmount]) }
+                receivedAmount = received
+            } else {
+                receivedAmount = amount
+            }
             return try connection.inTransaction {
-                try insertEntry(id: entryID, amount: amount, kind: kind, payeeID: nil, reportingDate: reportingDate,
+                try insertEntry(id: entryID, amount: amount, receivedAmount: receivedAmount, kind: kind, payeeID: nil, reportingDate: reportingDate,
                     categoryID: nil, accountID: accountID, destinationAccountID: destinationID, provenance: .inherited, note: draft.note)
                 return try requireTransaction(id: entryID)
             }
         }
         guard draft.destinationAccountID == nil else { throw LedgerError(message: "Only a transfer has a destination account.") }
+        guard draft.receivedAmount == nil else { throw LedgerError(message: "Only a transfer has a received amount.") }
         guard let categoryID = draft.categoryID else { throw RecordEntryError.incomplete([.category]) }
         let category = try category(id: categoryID)
         return try connection.inTransaction {

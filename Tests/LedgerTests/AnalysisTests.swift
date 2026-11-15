@@ -148,3 +148,58 @@ private func withAnalysisLedger(_ body: (Ledger, Ledger) throws -> Void) throws 
         #expect(try reader.describeSchema().contains("view budgets:"))
     }
 }
+
+@Test func transfersWithRateViewExposesSentReceivedCurrenciesAndEffectiveRate() throws {
+    try withAnalysisLedger { writer, reader in
+        let accounts = try writer.accounts()
+        let n26 = try #require(accounts.first { $0.name == "N26" })
+        let india = try #require(accounts.first { $0.name == "India" })
+        try writer.setAccountCurrency(id: india.id, to: .inr)
+        let date = try #require(ReportingDate(iso8601: "2026-11-15"))
+
+        _ = try writer.record(EntryDraft(
+            amount: Cents(50_000),
+            receivedAmount: Cents(4_500_000),
+            kind: .transfer,
+            reportingDate: date,
+            accountID: n26.id,
+            destinationAccountID: india.id
+        ))
+        let trashed = try writer.record(EntryDraft(
+            amount: Cents(10_000),
+            receivedAmount: Cents(900_000),
+            kind: .transfer,
+            reportingDate: date,
+            accountID: n26.id,
+            destinationAccountID: india.id
+        ))
+        try writer.trash(trashed.id, on: date)
+
+        let rows = try reader.query(
+            sql: """
+            SELECT reporting_date, source_account, destination_account,
+                sent_amount_cents, sent_amount, sent_currency,
+                received_amount_cents, received_amount, received_currency,
+                effective_rate
+            FROM transfers_with_rate
+            """
+        ).rows
+        #expect(rows == [
+            [
+                .text("2026-11-15"),
+                .text("N26"),
+                .text("India"),
+                .integer(50_000),
+                .real(500.0),
+                .text("EUR"),
+                .integer(4_500_000),
+                .real(45_000.0),
+                .text("INR"),
+                .real(90.0),
+            ],
+        ])
+        let schema = try reader.describeSchema()
+        #expect(schema.contains("transfers_with_rate"))
+        #expect(schema.contains("view transfers_with_rate:"))
+    }
+}

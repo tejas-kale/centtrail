@@ -16,6 +16,7 @@ final class CaptureModel: ObservableObject {
     @Published private(set) var editingEntryID: LedgerTransaction.ID?
     @Published var draftNote = ""
     @Published var amountText = ""
+    @Published var receivedAmountText = ""
     @Published var kind: Kind = .expense
     @Published var payee = ""
     @Published var selectedDate: Date
@@ -30,6 +31,14 @@ final class CaptureModel: ObservableObject {
 
     var frequentPayees: [FrequentPayee] {
         frequentPayeesByKind[kind] ?? []
+    }
+
+    var isCrossCurrencyTransfer: Bool {
+        guard kind == .transfer,
+              let source = accounts.first(where: { $0.id == accountID }),
+              let destination = accounts.first(where: { $0.id == destinationAccountID })
+        else { return false }
+        return source.currency != destination.currency
     }
     @Published var transactions: [LedgerTransaction] = []
     @Published var reviewInbox: [LedgerTransaction] = []
@@ -92,6 +101,7 @@ final class CaptureModel: ObservableObject {
         clearDraft()
         editingEntryID = transaction.id
         amountText = Self.formatAmountInput(transaction.amount)
+        receivedAmountText = transaction.receivedAmount.map(Self.formatAmountInput) ?? ""
         kind = transaction.kind
         payee = transaction.payee?.name ?? ""
         selectedDate = Self.date(from: transaction.reportingDate)
@@ -113,6 +123,7 @@ final class CaptureModel: ObservableObject {
         editingEntryID = nil
         draftNote = ""
         amountText = ""
+        receivedAmountText = ""
         kind = .expense
         payee = ""
         selectedDate = Self.date(from: today)
@@ -213,6 +224,7 @@ final class CaptureModel: ObservableObject {
     private var currentDraft: EntryDraft {
         EntryDraft(
             amount: Cents(euroText: amountText),
+            receivedAmount: isCrossCurrencyTransfer ? Cents(euroText: receivedAmountText) : nil,
             kind: kind,
             payee: payee,
             reportingDate: civilDate(selectedDate, calendar: .current),
@@ -377,10 +389,21 @@ struct TransactionRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(formatAmount(transaction.amount.value, currency: transaction.account.currency))
+            Text(amountLabel)
                 .foregroundStyle(transaction.kind == .income ? .green : .primary)
                 .monospacedDigit()
         }
+    }
+
+    private var amountLabel: String {
+        let sent = formatAmount(transaction.amount.value, currency: transaction.account.currency)
+        if transaction.kind == .transfer,
+           let destination = transaction.destinationAccount,
+           destination.currency != transaction.account.currency,
+           let received = transaction.receivedAmount {
+            return "\(sent) → \(formatAmount(received.value, currency: destination.currency))"
+        }
+        return sent
     }
 }
 
@@ -442,7 +465,7 @@ func shortRangeLabel(_ range: DateRange) -> String {
 private func refusalMessage(_ error: RecordEntryError) -> String {
     switch error {
     case .incomplete(let fields):
-        let ordered: [EntryField] = [.amount, .kind, .payee, .reportingDate, .category, .account, .destinationAccount]
+        let ordered: [EntryField] = [.amount, .receivedAmount, .kind, .payee, .reportingDate, .category, .account, .destinationAccount]
         let missing = ordered.filter(fields.contains).map(fieldName)
         return "Enter \(missing.joined(separator: ", "))."
     case .unknownCategory:
@@ -455,6 +478,7 @@ private func refusalMessage(_ error: RecordEntryError) -> String {
 private func fieldName(_ field: EntryField) -> String {
     switch field {
     case .amount: "an amount"
+    case .receivedAmount: "a received amount"
     case .kind: "a kind"
     case .payee: "a payee"
     case .reportingDate: "a reporting date"

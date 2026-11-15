@@ -137,4 +137,31 @@ struct SystemEntryPointsTests {
         #expect(try ledger.reviewInbox().isEmpty)
         #expect(dialog.contains("Nothing was saved"))
     }
+
+    @Test func recordEntryIntentSavesINREntryAndConfirmsInINR() async throws {
+        let ledger = try Ledger.openInMemory()
+        let inrAccount = try ledger.addAccount(name: "INR Cash", currency: .inr)
+        let dining = try #require(try ledger.categories().first { $0.name == "Restaurant" })
+        let nov01 = try #require(ReportingDate(iso8601: "2026-11-01"))
+        let today = try #require(ReportingDate(iso8601: "2026-11-15"))
+        _ = try ledger.record(EntryDraft(
+            amount: Cents(10000),
+            kind: .expense,
+            payee: "Chai Point",
+            reportingDate: nov01,
+            categoryID: dining.id,
+            accountID: inrAccount.id
+        ))
+
+        let dialog = try await RecordEntryIntent.record("250 Chai Point", in: ledger, today: today)
+
+        let transactions = try ledger.transactions()
+        #expect(transactions.count == 2)
+        let saved = transactions[0]
+        #expect(saved.account.currency == .inr)
+        #expect(dialog.contains("₹") || dialog.contains("INR"))
+        #expect(!dialog.contains("€"))
+        #expect(!dialog.contains("EUR"))
+        #expect(dialog.contains("Chai Point"))
+    }
 }

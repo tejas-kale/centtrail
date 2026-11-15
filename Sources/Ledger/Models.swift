@@ -173,6 +173,7 @@ public struct Payee: Hashable, Sendable, Identifiable {
 public struct Transaction: Hashable, Sendable, Identifiable {
     public let id: ID
     public let amount: Cents
+    public let receivedAmount: Cents?
     public let kind: Kind
     public let payee: Payee?
     public let reportingDate: ReportingDate
@@ -194,6 +195,7 @@ public struct Transaction: Hashable, Sendable, Identifiable {
     public init(
         id: ID,
         amount: Cents,
+        receivedAmount: Cents? = nil,
         kind: Kind,
         payee: Payee?,
         reportingDate: ReportingDate,
@@ -206,6 +208,7 @@ public struct Transaction: Hashable, Sendable, Identifiable {
     ) {
         self.id = id
         self.amount = amount
+        self.receivedAmount = receivedAmount
         self.kind = kind
         self.payee = payee
         self.reportingDate = reportingDate
@@ -220,6 +223,7 @@ public struct Transaction: Hashable, Sendable, Identifiable {
 
 public enum EntryField: String, Hashable, Sendable {
     case amount
+    case receivedAmount
     case kind
     case payee
     case reportingDate
@@ -361,6 +365,7 @@ public enum RecordEntryError: Error, Equatable {
 
 public struct EntryDraft: Equatable, Sendable {
     public var amount: Cents?
+    public var receivedAmount: Cents?
     public var kind: Kind?
     public var payee: String?
     public var reportingDate: ReportingDate?
@@ -370,6 +375,7 @@ public struct EntryDraft: Equatable, Sendable {
 
     public init(
         amount: Cents? = nil,
+        receivedAmount: Cents? = nil,
         kind: Kind? = nil,
         payee: String? = nil,
         reportingDate: ReportingDate? = nil,
@@ -380,6 +386,7 @@ public struct EntryDraft: Equatable, Sendable {
         note: String? = nil
     ) {
         self.amount = amount
+        self.receivedAmount = receivedAmount
         self.kind = kind
         self.payee = payee
         self.reportingDate = reportingDate

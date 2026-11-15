@@ -58,6 +58,8 @@ struct EntryRecord: Identifiable, Sendable {
     var trashedOn: String?
     @Column("needs_review")
     var needsReview: Bool = false
+    @Column("received_amount_cents")
+    var receivedAmountCents: Int?
 }
 
 @Table("counterparty_alias")
@@ -345,6 +347,30 @@ final class SQLiteConnection {
                         AND substr(spending.reporting_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')
                     WHERE category.is_removed = 0 AND category.counts_as_spending = 1
                     GROUP BY budget.id;
+                """)
+        }
+        migrator.registerMigration("v4_cross_currency_transfers") { db in
+            try db.execute(sql: """
+                ALTER TABLE entry ADD COLUMN received_amount_cents INTEGER;
+                CREATE VIEW transfers_with_rate AS
+                    SELECT entry.id,
+                        entry.reporting_date,
+                        source.name AS source_account,
+                        destination.name AS destination_account,
+                        entry.amount_cents AS sent_amount_cents,
+                        entry.amount_cents / 100.0 AS sent_amount,
+                        source.currency AS sent_currency,
+                        entry.received_amount_cents AS received_amount_cents,
+                        entry.received_amount_cents / 100.0 AS received_amount,
+                        destination.currency AS received_currency,
+                        CASE WHEN entry.received_amount_cents IS NOT NULL AND entry.amount_cents > 0
+                            THEN entry.received_amount_cents * 1.0 / entry.amount_cents
+                            ELSE NULL
+                        END AS effective_rate
+                    FROM entry
+                    JOIN effective_account AS source ON source.id = entry.account_id
+                    JOIN effective_account AS destination ON destination.id = entry.destination_account_id
+                    WHERE entry.kind = 'transfer' AND entry.trashed_on IS NULL;
                 """)
         }
         try migrator.migrate(database)

@@ -85,6 +85,7 @@ import Testing
     let date = try #require(ReportingDate(iso8601: "2026-11-14"))
     _ = try ledger.record(EntryDraft(
         amount: Cents(50000),
+        receivedAmount: Cents(4500000),
         kind: .transfer,
         reportingDate: date,
         accountID: n26.id,
@@ -149,6 +150,7 @@ private func legacyCurrencyLedger() throws -> URL {
     let database = try DatabaseQueue(path: file.path)
     try database.write { db in
         try db.execute(sql: """
+            DROP VIEW IF EXISTS transfers_with_rate;
             DROP VIEW IF EXISTS spending;
             DROP VIEW IF EXISTS effective_account;
             CREATE VIEW effective_account AS
@@ -168,9 +170,10 @@ private func legacyCurrencyLedger() throws -> URL {
                 LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
                 WHERE entry.kind = 'expense' AND entry.trashed_on IS NULL
                     AND category.counts_as_spending = 1;
+            ALTER TABLE entry DROP COLUMN received_amount_cents;
             ALTER TABLE account DROP COLUMN currency;
             ALTER TABLE account DROP COLUMN can_migrate_currency;
-            DELETE FROM grdb_migrations WHERE identifier = 'v4_account_currency';
+            DELETE FROM grdb_migrations WHERE identifier IN ('v4_account_currency', 'v4_cross_currency_transfers');
             """)
     }
     return file

@@ -35,9 +35,8 @@ struct HomeScreen: View {
                                 summary.spendingByCurrency[currency].map { (currency: currency, amount: $0) }
                             }
                             if totals.isEmpty {
-                                Text(formatAmount(0, currency: .eur))
-                                    .font(.largeTitle.bold())
-                                    .monospacedDigit()
+                                Text("No spending this month")
+                                    .foregroundStyle(.secondary)
                             } else {
                                 ForEach(totals, id: \.currency) { item in
                                     Text(formatAmount(item.amount, currency: item.currency))
@@ -250,6 +249,10 @@ struct AddEntrySheet: View {
         model.accounts.first { $0.id == model.accountID }?.currency ?? .eur
     }
 
+    private var destinationAccountCurrency: Currency? {
+        model.accounts.first { $0.id == model.destinationAccountID }?.currency
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -261,19 +264,58 @@ struct AddEntrySheet: View {
                     }
                     .pickerStyle(.segmented)
 
-                    HStack(spacing: 8) {
-                        Text(selectedAccountCurrency.symbol).foregroundStyle(.secondary)
-                        TextField("Amount", text: $model.amountText, prompt: Text("0.00"))
-                            .focused($isAmountFocused)
-                            .multilineTextAlignment(.center)
-                            #if os(iOS)
-                            .keyboardType(.decimalPad)
-                            #endif
+                    if model.isCrossCurrencyTransfer, let destinationCurrency = destinationAccountCurrency {
+                        VStack(spacing: 12) {
+                            VStack(spacing: 4) {
+                                Text("Sent (\(selectedAccountCurrency.rawValue))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 8) {
+                                    Text(selectedAccountCurrency.symbol).foregroundStyle(.secondary)
+                                    TextField("Sent (\(selectedAccountCurrency.rawValue))", text: $model.amountText, prompt: Text("0.00"))
+                                        .focused($isAmountFocused)
+                                        .multilineTextAlignment(.center)
+                                        #if os(iOS)
+                                        .keyboardType(.decimalPad)
+                                        #endif
+                                }
+                                .font(.system(size: amountFontSize, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
+                                .textFieldStyle(.plain)
+                            }
+                            VStack(spacing: 4) {
+                                Text("Received (\(destinationCurrency.rawValue))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 8) {
+                                    Text(destinationCurrency.symbol).foregroundStyle(.secondary)
+                                    TextField("Received (\(destinationCurrency.rawValue))", text: $model.receivedAmountText, prompt: Text("0.00"))
+                                        .multilineTextAlignment(.center)
+                                        #if os(iOS)
+                                        .keyboardType(.decimalPad)
+                                        #endif
+                                }
+                                .font(.system(size: amountFontSize * 0.75, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
+                                .textFieldStyle(.plain)
+                            }
+                        }
+                        .accessibilityElement(children: .contain)
+                    } else {
+                        HStack(spacing: 8) {
+                            Text(selectedAccountCurrency.symbol).foregroundStyle(.secondary)
+                            TextField("Amount", text: $model.amountText, prompt: Text("0.00"))
+                                .focused($isAmountFocused)
+                                .multilineTextAlignment(.center)
+                                #if os(iOS)
+                                .keyboardType(.decimalPad)
+                                #endif
+                        }
+                        .font(.system(size: amountFontSize, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .textFieldStyle(.plain)
+                        .accessibilityElement(children: .contain)
                     }
-                    .font(.system(size: amountFontSize, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .textFieldStyle(.plain)
-                    .accessibilityElement(children: .contain)
 
                     if model.kind != .transfer {
                         VStack(alignment: .leading, spacing: 12) {
@@ -567,10 +609,24 @@ struct TransactionDetail: View {
             }
 
             Section {
-                LabeledContent("Amount") {
-                    Text(formatAmount(transaction.amount.value, currency: transaction.account.currency))
-                        .foregroundStyle(transaction.kind == .income ? .green : .primary)
-                        .monospacedDigit()
+                if transaction.kind == .transfer,
+                   let destination = transaction.destinationAccount,
+                   destination.currency != transaction.account.currency,
+                   let received = transaction.receivedAmount {
+                    LabeledContent("Sent") {
+                        Text(formatAmount(transaction.amount.value, currency: transaction.account.currency))
+                            .monospacedDigit()
+                    }
+                    LabeledContent("Received") {
+                        Text(formatAmount(received.value, currency: destination.currency))
+                            .monospacedDigit()
+                    }
+                } else {
+                    LabeledContent("Amount") {
+                        Text(formatAmount(transaction.amount.value, currency: transaction.account.currency))
+                            .foregroundStyle(transaction.kind == .income ? .green : .primary)
+                            .monospacedDigit()
+                    }
                 }
                 LabeledContent("Kind", value: transaction.kind.rawValue.capitalized)
                 if let payee = transaction.payee { LabeledContent("Payee", value: payee.name) }

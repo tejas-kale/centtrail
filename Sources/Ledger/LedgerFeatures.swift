@@ -18,7 +18,8 @@ SELECT
     entry_category.name,
     entry_category.counts_as_spending,
     account.id, account.name, account.currency, destination.id, destination.name, destination.currency,
-    entry.needs_review
+    entry.needs_review,
+    entry.received_amount_cents
 FROM entry
 LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
 LEFT JOIN effective_category AS entry_category ON entry_category.id = entry.category_id
@@ -31,6 +32,7 @@ extension Ledger {
     func insertEntry(
         id: UUID,
         amount: Cents,
+        receivedAmount: Cents? = nil,
         kind: Kind,
         payeeID: UUID?,
         reportingDate: ReportingDate,
@@ -44,11 +46,13 @@ extension Ledger {
         try connection.execute(
             """
             INSERT INTO entry (
-                id, amount_cents, kind, counterparty_id, reporting_date, category_id,
+                id, amount_cents, received_amount_cents, kind, counterparty_id, reporting_date, category_id,
                 category_provenance, note, account_id, destination_account_id, needs_review
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
-                amount_cents = excluded.amount_cents, kind = excluded.kind,
+                amount_cents = excluded.amount_cents,
+                received_amount_cents = excluded.received_amount_cents,
+                kind = excluded.kind,
                 counterparty_id = excluded.counterparty_id, reporting_date = excluded.reporting_date,
                 category_id = excluded.category_id, category_provenance = excluded.category_provenance,
                 note = excluded.note, account_id = excluded.account_id,
@@ -58,6 +62,7 @@ extension Ledger {
             bindings: [
                 .text(stored(id)),
                 .integer(Int64(amount.value)),
+                receivedAmount.map { .integer(Int64($0.value)) } ?? .null,
                 .text(kind.rawValue),
                 payeeID.map { .text(stored($0)) } ?? .null,
                 .text(reportingDate.iso8601),
@@ -85,7 +90,7 @@ extension Ledger {
     }
 
     func decodeTransaction(_ row: [SQLiteValue]) throws -> Transaction {
-        guard row.count == 22,
+        guard row.count == 23,
               let entryID = row[0].text.flatMap(UUID.init(uuidString:)),
               let cents = row[1].integer,
               let kind = row[2].text.flatMap(Kind.init(rawValue:)),
@@ -98,6 +103,7 @@ extension Ledger {
         else {
             throw LedgerError(message: "The ledger returned an entry it could not read.")
         }
+        let receivedAmount = row[22].integer.map { Cents(Int($0)) }
         let note = row[5].text
         let payee: Payee?
         if let id = row[7].text.flatMap(UUID.init(uuidString:)), let name = row[8].text {
@@ -113,6 +119,7 @@ extension Ledger {
         return Transaction(
             id: Transaction.ID(rawValue: entryID),
             amount: Cents(Int(cents)),
+            receivedAmount: receivedAmount,
             kind: kind,
             payee: payee,
             reportingDate: reportingDate,
