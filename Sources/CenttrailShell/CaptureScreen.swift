@@ -31,7 +31,7 @@ final class CaptureModel: ObservableObject {
         frequentPayeesByKind[kind] ?? []
     }
     @Published var transactions: [LedgerTransaction] = []
-    @Published var homeSummary: HomeSummary?
+    @Published var monthSummary: MonthSummary?
     @Published var isPresentingAddSheet = false
     @Published var draftMessage: String?
     @Published var errorMessage: String?
@@ -263,7 +263,7 @@ final class CaptureModel: ObservableObject {
             .income: try ledger.frequentPayees(kind: .income),
         ]
         transactions = try ledger.transactions()
-        homeSummary = try ledger.homeSummary(on: today)
+        monthSummary = try ledger.monthSummary(on: today)
     }
 
     private static func date(from reportingDate: ReportingDate) -> Date {

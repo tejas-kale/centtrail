@@ -1,4 +1,3 @@
-import Charts
 import Ledger
 import SwiftUI
 
@@ -6,7 +5,7 @@ struct HomeScreen: View {
     @ObservedObject var model: CaptureModel
 
     private var recentTransactions: [LedgerTransaction] {
-        Array(model.transactions.prefix(5))
+        model.monthSummary?.recentEntries ?? []
     }
 
     var body: some View {
@@ -26,33 +25,17 @@ struct HomeScreen: View {
                     }
                 }
 
-                if let summary = model.homeSummary {
-                    if summary.currentSpendingCents == 0 && summary.categories.isEmpty {
-                        Section {
-                            ContentUnavailableView {
-                                Label("No spending this month", systemImage: "eurosign.circle")
-                            } description: {
-                                Text("Add an expense to compare \(monthTitle(model.today)) with \(monthName(summary.previousFullMonthRange.start)).")
-                            } actions: {
-                                Button("Add transaction") {
-                                    model.openAddSheet()
-                                }
-                                .buttonStyle(.borderedProminent)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
+                if let summary = model.monthSummary {
+                    Section {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(monthTitle(model.today))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text(formatEuro(summary.spendingCents))
+                                .font(.largeTitle.bold())
+                                .monospacedDigit()
                         }
-                    } else {
-                        Section {
-                            HomeSummaryCard(summary: summary, today: model.today)
-                        }
-
-                        let topCategories = Array(summary.categories.filter { $0.currentCents > 0 }.prefix(5))
-                        if !topCategories.isEmpty {
-                            Section("Top categories") {
-                                HomeCategoryComparisonChart(categories: topCategories)
-                            }
-                        }
+                        .padding(.vertical, 4)
                     }
                 }
 
@@ -90,126 +73,6 @@ struct HomeScreen: View {
                 }
             }
         }
-    }
-}
-
-private struct HomeSummaryCard: View {
-    let summary: HomeSummary
-    let today: ReportingDate
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(monthTitle(today))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            Text(formatEuro(summary.currentSpendingCents))
-                .font(.largeTitle.bold())
-                .monospacedDigit()
-
-            comparisonLine
-                .font(.subheadline)
-
-            Text("\(monthName(summary.previousFullMonthRange.start)) total: \(formatEuro(summary.previousFullMonthSpendingCents))")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            if summary.unequalLengths {
-                Text("Unequal month lengths: \(summary.currentMonthRange.end.day) days vs \(summary.previousSameDaysRange.end.day) days")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    /// Spelled out ("€1,200 less than 1–14 Oct") instead of a bare signed amount,
-    /// which read like a negative balance.
-    @ViewBuilder
-    private var comparisonLine: some View {
-        let change = summary.changeCents
-        let earlier = shortRangeLabel(summary.previousSameDaysRange)
-        if change == 0 {
-            Text("Same as \(earlier)")
-                .foregroundStyle(.secondary)
-        } else {
-            HStack(spacing: 4) {
-                Image(systemName: change < 0 ? "arrow.down.right" : "arrow.up.right")
-                Text("\(formatEuro(abs(change))) \(change < 0 ? "less" : "more") than \(earlier)")
-                    .monospacedDigit()
-                if let percentage = summary.percentageChange {
-                    Text("(\(abs(percentage).formatted(.number.precision(.fractionLength(0))))%)")
-                        .monospacedDigit()
-                }
-            }
-            .foregroundStyle(change < 0 ? Color.green : Color.orange)
-        }
-    }
-}
-
-private struct HomeCategoryComparisonChart: View {
-    let categories: [CategorySummary]
-    private static let currentPeriod = "This month"
-    private static let previousPeriod = "Same days last month"
-
-    private struct BarEntry: Identifiable {
-        let id: String
-        let categoryName: String
-        let period: String
-        let euros: Double
-    }
-
-    private var bars: [BarEntry] {
-        categories.flatMap { item in
-            [
-                BarEntry(
-                    id: "\(item.id.rawValue)-current",
-                    categoryName: item.category.name,
-                    period: Self.currentPeriod,
-                    euros: Double(item.currentCents) / 100.0
-                ),
-                BarEntry(
-                    id: "\(item.id.rawValue)-previous",
-                    categoryName: item.category.name,
-                    period: Self.previousPeriod,
-                    euros: Double(item.previousSameDaysCents) / 100.0
-                ),
-            ]
-        }
-    }
-
-    private var maxEuros: Double { bars.map(\.euros).max() ?? 0 }
-
-    var body: some View {
-        Chart(bars) { bar in
-            BarMark(
-                x: .value("Spending", bar.euros),
-                y: .value("Category", bar.categoryName)
-            )
-            .position(by: .value("Period", bar.period))
-            .foregroundStyle(by: .value("Period", bar.period))
-            .cornerRadius(4)
-            .annotation(position: .trailing, alignment: .leading, spacing: 4) {
-                Text(bar.euros.formatted(.currency(code: "EUR").precision(.fractionLength(0))))
-                    .font(.caption2)
-                    .fontWeight(bar.period == Self.currentPeriod ? .semibold : .regular)
-                    .foregroundStyle(bar.period == Self.currentPeriod ? .primary : .secondary)
-                    .monospacedDigit()
-            }
-        }
-        .chartForegroundStyleScale([
-            Self.currentPeriod: Color.accentColor,
-            Self.previousPeriod: Color.secondary.opacity(0.45),
-        ])
-        .chartLegend(position: .top, alignment: .leading)
-        // Values sit on the bars, so the axis only adds noise; the headroom keeps labels inside the chart.
-        .chartXAxis(.hidden)
-        .chartXScale(domain: 0...max(maxEuros * 1.3, 1))
-        .chartYAxis {
-            AxisMarks(position: .leading)
-        }
-        .frame(height: CGFloat(max(categories.count, 1)) * 52 + 28)
-        .padding(.vertical, 4)
     }
 }
 
