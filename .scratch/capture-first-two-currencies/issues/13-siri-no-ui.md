@@ -4,10 +4,10 @@
 
 **Blocked by:** 10 (Voice overlay filling amount, payee and date), 12 (Review inbox)
 
-**Status:** ready-for-agent
+**Status:** implemented; pending manual verification
 
-- [ ] An App Intent with a Siri phrase takes the spoken text and never opens the app.
-- [ ] It saves a complete entry when draft completion fills every field, otherwise saves for review.
-- [ ] Siri's spoken confirmation states amount, currency, payee and category (or "to review").
-- [ ] An amount that cannot be parsed saves nothing and Siri says so.
+- [x] An App Intent with a Siri phrase takes the spoken text and never opens the app.
+- [x] It saves a complete entry when draft completion fills every field, otherwise saves for review.
+- [x] Siri's spoken confirmation states amount, currency, payee and category (or "to review").
+- [x] An amount that cannot be parsed saves nothing and Siri says so.
 - [ ] Ledger behaviour (complete vs review save from completed drafts) is tested through the Ledger public API; the Siri flow is verified by hand.

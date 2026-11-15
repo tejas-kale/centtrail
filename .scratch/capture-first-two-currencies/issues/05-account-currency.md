@@ -4,13 +4,13 @@
 
 **Blocked by:** 04 (Home shows this month's total only)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Accounts carry a currency; new accounts choose one in Settings; the field syncs.
-- [ ] Migration sets every existing account to EUR and keeps all amounts unchanged.
-- [ ] Changing an account's currency is refused once it holds entries, except a one-time allowance used to mark the India account INR after migration.
-- [ ] The capture form and entry lists show the account's currency symbol.
-- [ ] The month summary returns spending totals keyed by currency; Home shows one total per currency with spending.
-- [ ] CSV import assigns imported rows the target account's currency.
-- [ ] If ticket 08 has landed, the `spending` view and schema description include the currency code.
-- [ ] Tested through the Ledger public API, including a pre-migration ledger.
+- [x] Accounts carry a currency; new accounts choose one in Settings; the field syncs.
+- [x] Migration sets every existing account to EUR and keeps all amounts unchanged.
+- [x] Changing an account's currency is refused once it holds entries, except a one-time allowance used to mark the India account INR after migration.
+- [x] The capture form and entry lists show the account's currency symbol.
+- [x] The month summary returns spending totals keyed by currency; Home shows one total per currency with spending.
+- [x] CSV import assigns imported rows the target account's currency.
+- [x] If ticket 08 has landed, the `spending` view and schema description include the currency code.
+- [x] Tested through the Ledger public API, including a pre-migration ledger.

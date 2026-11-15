@@ -4,11 +4,11 @@
 
 **Blocked by:** 03 (Payees remember their category), 04 (Home shows this month's total only)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] A reserved Uncategorised category exists; it never becomes a payee default and is excluded from payee suggestions and budgets.
-- [ ] Ledger can record an entry for review (Uncategorised, needs-review flag) and lists the review inbox newest first.
-- [ ] Correcting a review entry's category clears the flag and sets the payee's default if it had none.
-- [ ] Review entries count in spending totals in their currency.
-- [ ] The month summary includes the review count; Home shows "N to review" only when N > 0 and opens the inbox.
-- [ ] Tested through the Ledger public API.
+- [x] A reserved Uncategorised category exists; it never becomes a payee default and is excluded from payee suggestions and budgets.
+- [x] Ledger can record an entry for review (Uncategorised, needs-review flag) and lists the review inbox newest first.
+- [x] Correcting a review entry's category clears the flag and sets the payee's default if it had none.
+- [x] Review entries count in spending totals in their currency.
+- [x] The month summary includes the review count; Home shows "N to review" only when N > 0 and opens the inbox.
+- [x] Tested through the Ledger public API.

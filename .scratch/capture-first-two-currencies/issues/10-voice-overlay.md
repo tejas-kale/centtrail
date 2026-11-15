@@ -4,11 +4,11 @@
 
 **Blocked by:** 09 (Redesigned capture card)
 
-**Status:** ready-for-agent
+**Status:** implemented; pending manual verification
 
-- [ ] The Interpreter extracts only amount, payee text and date (including relative dates like "yesterday").
-- [ ] A Ledger draft-completion step takes amount, payee text and date, resolves the payee by name or alias, fills default category and account, and reports which fields could not be filled.
-- [ ] Saying "12.50 Lidl" for a known payee yields a complete card ready to save.
-- [ ] Fields not mentioned keep their current values.
-- [ ] A clear message appears when voice could not fill the card.
+- [x] The Interpreter extracts only amount, payee text and date (including relative dates like "yesterday").
+- [x] A Ledger draft-completion step takes amount, payee text and date, resolves the payee by name or alias, fills default category and account, and reports which fields could not be filled.
+- [x] Saying "12.50 Lidl" for a known payee yields a complete card ready to save.
+- [x] Fields not mentioned keep their current values.
+- [x] A clear message appears when voice could not fill the card.
 - [ ] Draft completion is tested through the Ledger public API; the overlay is verified by hand on device.

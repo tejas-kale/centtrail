@@ -4,12 +4,12 @@
 
 **Blocked by:** 05 (Account currency and in-place migration)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Settings lets the owner set, change and remove a budget (amount and currency) per category; at most one per category.
-- [ ] Budgets are synced records.
-- [ ] The month summary returns per-budget gauges: category, currency, budget, spent this month in that currency, fraction.
-- [ ] Spending in the other currency does not count toward a budget.
-- [ ] Home shows gauges only for budgeted categories, with amber at ≥80% and red at ≥100%.
-- [ ] If ticket 08 has landed, a `budgets` view exposes each budget with current-month spending.
-- [ ] Tested through the Ledger public API.
+- [x] Settings lets the owner set, change and remove a budget (amount and currency) per category; at most one per category.
+- [x] Budgets are synced records.
+- [x] The month summary returns per-budget gauges: category, currency, budget, spent this month in that currency, fraction.
+- [x] Spending in the other currency does not count toward a budget.
+- [x] Home shows gauges only for budgeted categories, with amber at ≥80% and red at ≥100%.
+- [x] If ticket 08 has landed, a `budgets` view exposes each budget with current-month spending.
+- [x] Tested through the Ledger public API.

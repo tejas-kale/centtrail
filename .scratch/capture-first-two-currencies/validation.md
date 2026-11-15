@@ -30,4 +30,9 @@ Log: `/private/tmp/centtrail-capture-ios-destination.log`. Omit the explicit `-s
 
 ## Final checks
 
-Pending integration completion.
+All 13 tickets are implemented on `capture-first-two-currencies` (with tickets `08`, `09`, `10`, `11`, `13` pending device/manual verification).
+
+- `xcode swift test`: 117 `LedgerTests` + 13 `SystemEntryPointsTests` passed (130 total).
+- `xcode xcodebuild -project Apps/Centtrail.xcodeproj -scheme CenttrailIOS -destination "generic/platform=iOS Simulator" -derivedDataPath .build/dd CODE_SIGNING_ALLOWED=NO build`: **BUILD SUCCEEDED**.
+- `xcode xcodebuild -project Apps/Centtrail.xcodeproj -scheme CenttrailMac -destination "platform=macOS" -derivedDataPath .build/dd CODE_SIGNING_ALLOWED=NO build`: **BUILD SUCCEEDED** (verified).
+- Code review (Standards + Spec): 2 Spec Review bugs fixed in `b4b215f` (INR Siri confirmation formatting; hiding empty EUR total on Home) along with missing Ticket 06 (`received_amount_cents`, `transfers_with_rate`).

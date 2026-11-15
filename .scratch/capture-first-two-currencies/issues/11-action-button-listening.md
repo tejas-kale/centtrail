@@ -4,10 +4,10 @@
 
 **Blocked by:** 10 (Voice overlay filling amount, payee and date)
 
-**Status:** ready-for-agent
+**Status:** implemented; pending manual verification
 
-- [ ] An App Intent opens the capture card in listening mode; the Action button and the control use it.
-- [ ] Launching from the Lock Screen or a cold start still lands in listening mode.
-- [ ] Tapping outside the overlay leaves the card open for typing.
-- [ ] The in-app + and Mac Cmd-N do not auto-listen.
+- [x] An App Intent opens the capture card in listening mode; the Action button and the control use it.
+- [x] Launching from the Lock Screen or a cold start still lands in listening mode.
+- [x] Tapping outside the overlay leaves the card open for typing.
+- [x] The in-app + and Mac Cmd-N do not auto-listen.
 - [ ] Verified by hand on the iPhone Air.

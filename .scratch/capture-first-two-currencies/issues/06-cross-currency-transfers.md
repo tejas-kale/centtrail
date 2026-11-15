@@ -4,12 +4,12 @@
 
 **Blocked by:** 05 (Account currency and in-place migration)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Transfer mode in capture shows Sent (source currency) and Received (destination currency) when the accounts' currencies differ, and one amount when they match.
-- [ ] Recording a cross-currency transfer without both amounts is refused with a clear message; same-currency transfers store equal amounts.
-- [ ] Migrated transfers keep their amount as sent with no received amount and are valid.
-- [ ] Transfers stay excluded from spending in both currencies.
-- [ ] Editing a transfer preserves both amounts.
-- [ ] If ticket 08 has landed, a `transfers_with_rate` view exposes date, accounts, sent/received amounts with currencies and the effective rate when both exist.
-- [ ] Tested through the Ledger public API.
+- [x] Transfer mode in capture shows Sent (source currency) and Received (destination currency) when the accounts' currencies differ, and one amount when they match.
+- [x] Recording a cross-currency transfer without both amounts is refused with a clear message; same-currency transfers store equal amounts.
+- [x] Migrated transfers keep their amount as sent with no received amount and are valid.
+- [x] Transfers stay excluded from spending in both currencies.
+- [x] Editing a transfer preserves both amounts.
+- [x] If ticket 08 has landed, a `transfers_with_rate` view exposes date, accounts, sent/received amounts with currencies and the effective rate when both exist.
+- [x] Tested through the Ledger public API.
