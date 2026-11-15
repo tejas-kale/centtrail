@@ -18,10 +18,7 @@ import Testing
     """
     let rows = try ledger.previewImport(csv)
     guard case .needsCorrection = rows[0].state else { Issue.record("An overflowing CSV amount must need correction"); return }
-    let backend = AppleFoundationModelBackend(availabilityProvider: { nil }, reportGenerator: { _, _ in
-        GeneratedReportIntent(operation: .search, measure: .spending, amountComparison: .greaterThan, amountEuros: 1e100)
-    }, captureGenerator: { _, _ in GeneratedCaptureDraft(amountEuros: 1e100) })
+    let backend = AppleFoundationModelBackend(availabilityProvider: { nil }, captureGenerator: { _, _ in GeneratedCaptureDraft(amountEuros: 1e100) })
     let interpreter = Interpreter(ledger: ledger, today: try #require(ReportingDate(iso8601: "2026-11-14")), backend: backend)
-    guard case .unsupported = try await interpreter.interpretReportAsync("find expenses over a huge amount") else { Issue.record("Unsafe report amount must be refused"); return }
     #expect(try await interpreter.interpretCaptureAsync("huge expense").draft.amount == nil)
 }

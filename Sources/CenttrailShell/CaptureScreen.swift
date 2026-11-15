@@ -303,9 +303,6 @@ private struct AppTabShell: View {
             Tab("Home", systemImage: "house") {
                 HomeScreen(model: model)
             }
-            Tab("Ask", systemImage: "sparkles") {
-                AskScreen(model: model)
-            }
             Tab("Settings", systemImage: "gearshape") {
                 SettingsScreen(model: model)
             }
