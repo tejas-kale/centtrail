@@ -18,6 +18,7 @@ final class VoiceCapture: ObservableObject {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var sessionID: UUID?
     private var hasInputTap = false
+    private var silenceTask: Task<Void, Never>?
 
     func start(contextualStrings: [String]) async {
         guard !isRecording, !isPreparing else { return }
@@ -82,12 +83,26 @@ final class VoiceCapture: ObservableObject {
 
     private func handle(text: String?, isFinal: Bool, failure: String?, sessionID id: UUID) {
         guard sessionID == id else { return }
-        if let text { transcript = text }
+        if let text {
+            transcript = text
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isFinal {
+                scheduleSilenceFinish(sessionID: id)
+            }
+        }
         if isFinal {
             finish()
         } else if let failure {
             cancel()
             errorMessage = "Speech recognition stopped: \(failure). Try the mic again or enter the transaction by hand."
+        }
+    }
+
+    private func scheduleSilenceFinish(sessionID id: UUID) {
+        silenceTask?.cancel()
+        silenceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.8))
+            guard !Task.isCancelled, let self, self.sessionID == id, self.isRecording else { return }
+            self.finish()
         }
     }
 
@@ -136,6 +151,8 @@ final class VoiceCapture: ObservableObject {
     }
 
     func cancel() {
+        silenceTask?.cancel()
+        silenceTask = nil
         sessionID = nil
         isPreparing = false
         isRecording = false

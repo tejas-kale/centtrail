@@ -255,12 +255,7 @@ struct AddEntrySheet: View {
                             .textFieldStyle(.roundedBorder)
                     }
 
-                    if voice.isPreparing {
-                        ProgressView("Preparing microphone")
-                    } else if voice.isRecording {
-                        Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript)
-                            .foregroundStyle(.secondary)
-                    } else if model.isInterpretingSpeech {
+                    if model.isInterpretingSpeech {
                         ProgressView("Filling the card")
                     }
 
@@ -313,6 +308,11 @@ struct AddEntrySheet: View {
             .onDisappear {
                 voice.cancel()
                 model.cancelSpeechInterpretation()
+            }
+        }
+        .overlay {
+            if voice.isPreparing || voice.isRecording {
+                listeningOverlay
             }
         }
         .frame(minWidth: 300)
@@ -370,14 +370,55 @@ struct AddEntrySheet: View {
         }
     }
 
+    private var listeningOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.35)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { voice.cancel() }
+                .accessibilityLabel("Dismiss listening overlay")
+
+            VStack(spacing: 16) {
+                Image(systemName: voice.isPreparing ? "mic" : "mic.fill")
+                    .font(.largeTitle)
+                    .foregroundStyle(.tint)
+                    .symbolEffect(.pulse, isActive: voice.isRecording)
+
+                Text(voice.isPreparing ? "Preparing microphone…" : "Listening…")
+                    .font(.headline)
+
+                Text(voice.transcript.isEmpty ? "Say amount, payee and date" : voice.transcript)
+                    .font(.body)
+                    .foregroundStyle(voice.transcript.isEmpty ? .secondary : .primary)
+                    .multilineTextAlignment(.center)
+                    .frame(minHeight: 44)
+
+                if voice.isRecording {
+                    Button("Done") {
+                        voice.finish()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 340)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
+            .shadow(radius: 20)
+            .padding(24)
+        }
+    }
+
     private var microphoneButton: some View {
         Button {
             isAmountFocused = false
             if voice.isRecording {
                 voice.finish()
             } else {
+                let aliases = (try? model.ledger.confirmedAliases().map(\.name)) ?? []
+                let contextual = Array((model.payees.map(\.name) + aliases).prefix(100))
                 Task {
-                    await voice.start(contextualStrings: Array(model.payees.map(\.name).prefix(100)))
+                    await voice.start(contextualStrings: contextual)
                 }
             }
         } label: {

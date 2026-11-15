@@ -214,17 +214,20 @@ final class CaptureModel: ObservableObject {
             let interpretation = try await Interpreter(ledger: ledger, today: today)
                 .interpretCaptureAsync(text, defaults: defaults)
             guard speechInterpretationID == id else { return }
+            let parsed = interpretation.parsed
+            guard parsed.amount != nil || parsed.payeeText != nil || parsed.reportingDate != nil else {
+                draftMessage = "Voice could not fill the card from \"\(text)\". Try again or enter the details by hand."
+                return
+            }
             let draft = interpretation.draft
             if let amount = draft.amount {
                 amountText = Self.formatAmountInput(amount)
             }
-            if let kind = draft.kind { self.kind = kind }
             if let payee = draft.payee { self.payee = payee }
             if let date = draft.reportingDate { selectedDate = Self.date(from: date) }
             categoryID = draft.categoryID
             categoryChosenManually = draft.overridesCategory
             accountID = draft.accountID
-            destinationAccountID = draft.destinationAccountID
         } catch {
             guard speechInterpretationID == id else { return }
             draftMessage = "The spoken entry could not be filled: \(error.localizedDescription). Try again or enter it by hand."
