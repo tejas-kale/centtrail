@@ -4,10 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** implemented; awaiting iOS integration build
 
-- [ ] The tab bar / Mac sidebar has no Ask destination, on iPhone and Mac.
-- [ ] Report-interpretation code and its tests (Ask chat, Ask evaluation, report follow-up, question period) are deleted.
-- [ ] Voice capture still fills the capture form; the existing voice capture tests pass.
-- [ ] Ledger report calculations still used by Home remain and their tests pass.
+- [x] The tab bar / Mac sidebar has no Ask destination, on iPhone and Mac.
+- [x] Report-interpretation code and its tests (Ask chat, Ask evaluation, report follow-up, question period) are deleted.
+- [x] Voice capture still fills the capture form; the existing voice capture tests pass.
+- [x] Ledger report calculations still used by Home remain and their tests pass.
 - [ ] The package builds for iOS and macOS with no unused Interpreter report types left.
+
+Validation: macOS `swift test --skip-update` passed, including voice capture and Ledger report calculations. iOS app compile is running separately; its final acceptance checkbox stays open until that succeeds.
