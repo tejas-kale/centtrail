@@ -58,6 +58,14 @@ struct HomeScreen: View {
                             }
                         }
                     }
+
+                    if !summary.budgetGauges.isEmpty {
+                        Section("Budgets") {
+                            ForEach(summary.budgetGauges) { gauge in
+                                BudgetGaugeRow(gauge: gauge)
+                            }
+                        }
+                    }
                 }
 
                 Section("Recent transactions") {
@@ -94,6 +102,34 @@ struct HomeScreen: View {
                 }
             }
         }
+    }
+}
+
+private struct BudgetGaugeRow: View {
+    let gauge: BudgetGauge
+
+    private var tintColor: Color {
+        switch gauge.status {
+        case .normal: .accentColor
+        case .warning: .orange
+        case .exceeded: .red
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(gauge.category.name)
+                Spacer()
+                Text("\(formatAmount(gauge.spent.value, currency: gauge.currency)) / \(formatAmount(gauge.budget.value, currency: gauge.currency))")
+                    .font(.footnote)
+                    .foregroundStyle(gauge.status == .normal ? .secondary : tintColor)
+                    .monospacedDigit()
+            }
+            ProgressView(value: min(gauge.fraction, 1.0))
+                .tint(tintColor)
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -561,6 +597,11 @@ struct SettingsScreen: View {
                         CategoriesScreen(model: model)
                     } label: {
                         Label("Categories", systemImage: "square.grid.2x2")
+                    }
+                    NavigationLink {
+                        BudgetsScreen(model: model)
+                    } label: {
+                        Label("Budgets", systemImage: "chart.bar")
                     }
                     NavigationLink {
                         PayeesScreen(model: model)

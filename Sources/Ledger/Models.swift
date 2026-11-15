@@ -400,16 +400,61 @@ public struct MonthSummary: Hashable, Sendable {
     public let spendingByCurrency: [Currency: Int]
     public let recentEntries: [Transaction]
     public let reviewCount: Int
+    public let budgetGauges: [BudgetGauge]
 
     public init(
         currentMonthRange: DateRange,
         spendingByCurrency: [Currency: Int],
         recentEntries: [Transaction],
-        reviewCount: Int = 0
+        reviewCount: Int = 0,
+        budgetGauges: [BudgetGauge] = []
     ) {
         self.currentMonthRange = currentMonthRange
         self.spendingByCurrency = spendingByCurrency
         self.recentEntries = recentEntries
         self.reviewCount = reviewCount
+        self.budgetGauges = budgetGauges
+    }
+}
+
+public enum BudgetStatus: Hashable, Sendable {
+    case normal
+    case warning
+    case exceeded
+}
+
+public struct BudgetGauge: Hashable, Sendable, Identifiable {
+    public var id: Category.ID { category.id }
+    public let category: Category
+    public let currency: Currency
+    public let budget: Cents
+    public let spent: Cents
+    public let fraction: Double
+
+    public var status: BudgetStatus {
+        if spent.value >= budget.value { return .exceeded }
+        if spent.value * 5 >= budget.value * 4 { return .warning }
+        return .normal
+    }
+
+    public init(category: Category, currency: Currency, budget: Cents, spent: Cents) {
+        self.category = category
+        self.currency = currency
+        self.budget = budget
+        self.spent = spent
+        self.fraction = budget.value > 0 ? Double(spent.value) / Double(budget.value) : 0
+    }
+}
+
+public struct CategoryBudget: Hashable, Sendable, Identifiable {
+    public var id: Category.ID { category.id }
+    public let category: Category
+    public let currency: Currency
+    public let amount: Cents
+
+    public init(category: Category, currency: Currency, amount: Cents) {
+        self.category = category
+        self.currency = currency
+        self.amount = amount
     }
 }
