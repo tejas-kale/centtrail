@@ -49,7 +49,7 @@ final class CaptureModel: ObservableObject {
         self.today = today
         self.selectedDate = Self.date(from: today)
         try reload()
-        accountID = accounts.first?.id
+        accountID = (try? ledger.mostRecentlyUsedAccount())?.id ?? accounts.first?.id
         newEntryObserver = NotificationCenter.default.addObserver(forName: .centtrailNewEntry, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -102,22 +102,32 @@ final class CaptureModel: ObservableObject {
         payee = ""
         selectedDate = Self.date(from: today)
         categoryID = nil
-        accountID = accounts.first?.id
+        accountID = (try? ledger.mostRecentlyUsedAccount())?.id ?? accounts.first?.id
         destinationAccountID = accounts.first(where: { $0.name == "India" })?.id
         categoryChosenManually = false
         draftMessage = nil
     }
 
     func prefillCategory() {
-        guard !categoryChosenManually else { return }
         do {
-            guard let category = try ledger.defaultCategory(forPayeeName: payee) else { return }
-            applyingPrefill = true
-            categoryID = category.id
-            applyingPrefill = false
+            if !categoryChosenManually {
+                applyingPrefill = true
+                categoryID = try ledger.defaultCategory(forPayeeName: payee)?.id
+                applyingPrefill = false
+            }
+            accountID = try ledger.lastUsedAccount(forPayeeName: payee)?.id
+                ?? ledger.mostRecentlyUsedAccount()?.id
+                ?? accounts.first?.id
         } catch {
+            applyingPrefill = false
             draftMessage = error.localizedDescription
         }
+    }
+
+    var payeeSuggestions: [Payee] {
+        (try? ledger.payeeSuggestions(matching: payee))?.filter {
+            $0.name.caseInsensitiveCompare(payee.trimmingCharacters(in: .whitespacesAndNewlines)) != .orderedSame
+        } ?? []
     }
 
     func selectSuggestedPayee(_ name: String) {
