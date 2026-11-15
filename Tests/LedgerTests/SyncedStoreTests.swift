@@ -170,6 +170,6 @@ private func openSyncedLedger() throws -> Ledger {
         #expect(try !reopened.accounts().contains { $0.id == accounts[2].id })
         #expect(try reopened.transaction(id: entry.id).category?.name == "Groceries")
         #expect(try reopened.transaction(id: entry.id).account.name == "Everyday")
-        #expect(try reopened.homeSummary(on: try #require(ReportingDate(iso8601: "2026-11-14"))).categories.first?.category.name == "Groceries")
+        #expect(try reopened.monthSummary(on: try #require(ReportingDate(iso8601: "2026-11-14"))).recentEntries.first?.category?.name == "Groceries")
     }
 }

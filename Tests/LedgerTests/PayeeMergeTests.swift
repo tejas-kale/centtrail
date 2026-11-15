@@ -66,7 +66,7 @@ import Testing
     #expect(imported?.payee!.name == "Amazon")
 }
 
-@Test func mergingPayeeWithProposedDefaultCleansUpProposalAndRejectsSelfMerge() throws {
+@Test func mergingAnImportedPayeeUsesTheSurvivingDefaultAndRejectsSelfMerge() throws {
     let ledger = try Ledger.openInMemory()
     let amazon = try recordEntry(ledger, cents: 1500, kind: .expense, payee: "Amazon", date: "2026-02-01", category: "Shopping")
 
@@ -75,13 +75,13 @@ import Testing
     2026-02-05T10:00:00+0100,-22.00,EUR,EUR,1.0,AMZN MKTP,Supermarket,N26,
     """
     #expect(try ledger.commitImport(csv).importedCount == 1)
-    let proposal = try #require(try ledger.proposedPayeeDefaults().first { $0.payee == "AMZN MKTP" })
+    let importedPayee = try #require(try ledger.payees().first { $0.name == "AMZN MKTP" })
 
     #expect(throws: LedgerError.self) {
         try ledger.mergePayees(sourceID: amazon.payee!.id, into: amazon.payee!.id)
     }
 
-    try ledger.mergePayees(sourceID: proposal.payeeID, into: amazon.payee!.id)
+    try ledger.mergePayees(sourceID: importedPayee.id, into: amazon.payee!.id)
     #expect(try ledger.proposedPayeeDefaults().isEmpty)
     #expect(try ledger.payees().map(\.name) == ["Amazon"])
 }
