@@ -33,6 +33,7 @@ final class CaptureModel: ObservableObject {
     @Published var transactions: [LedgerTransaction] = []
     @Published var monthSummary: MonthSummary?
     @Published var isPresentingAddSheet = false
+    @Published private(set) var shouldStartListening = false
     @Published var draftMessage: String?
     @Published var errorMessage: String?
     @Published private(set) var isInterpretingSpeech = false
@@ -53,12 +54,12 @@ final class CaptureModel: ObservableObject {
         newEntryObserver = NotificationCenter.default.addObserver(forName: .centtrailNewEntry, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                _ = CenttrailEntryTrigger.shared.consumePendingNewEntry()
-                self.openAddSheet()
+                let pending = CenttrailEntryTrigger.shared.consumePendingNewEntry()
+                self.openAddSheet(startListening: pending?.startListening ?? false)
             }
         }
-        if CenttrailEntryTrigger.shared.consumePendingNewEntry() {
-            openAddSheet()
+        if let pending = CenttrailEntryTrigger.shared.consumePendingNewEntry() {
+            openAddSheet(startListening: pending.startListening)
         }
         // Edits pulled in by iCloud sync land in the ledger without passing
         // through this model, so refresh whenever the ledger changes.
@@ -73,9 +74,16 @@ final class CaptureModel: ObservableObject {
         }
     }
 
-    func openAddSheet() {
+    func openAddSheet(startListening: Bool = false) {
         clearDraft()
+        shouldStartListening = startListening
         isPresentingAddSheet = true
+    }
+
+    func consumeStartListening() -> Bool {
+        guard shouldStartListening else { return false }
+        shouldStartListening = false
+        return true
     }
 
     func openEditSheet(_ transaction: LedgerTransaction) {
@@ -105,6 +113,7 @@ final class CaptureModel: ObservableObject {
         accountID = (try? ledger.mostRecentlyUsedAccount())?.id ?? accounts.first?.id
         destinationAccountID = accounts.first(where: { $0.name == "India" })?.id
         categoryChosenManually = false
+        shouldStartListening = false
         draftMessage = nil
     }
 

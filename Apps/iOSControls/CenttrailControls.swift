@@ -20,7 +20,7 @@ struct AddExpenseControl: ControlWidget {
             }
         }
         .displayName("Add expense")
-        .description("Opens Centtrail to record a new entry.")
+        .description("Opens Centtrail listening to record a new entry.")
     }
 }
 

@@ -294,7 +294,18 @@ struct AddEntrySheet: View {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .onAppear { isAmountFocused = true }
+            .onAppear {
+                if model.consumeStartListening() {
+                    startListening()
+                } else {
+                    isAmountFocused = true
+                }
+            }
+            .onChange(of: model.shouldStartListening) { _, shouldStart in
+                if shouldStart, model.consumeStartListening() {
+                    startListening()
+                }
+            }
             .onChange(of: voice.completedTranscript) { _, text in
                 guard let text else { return }
                 Task { await model.interpretSpeech(text) }
@@ -411,15 +422,11 @@ struct AddEntrySheet: View {
 
     private var microphoneButton: some View {
         Button {
-            isAmountFocused = false
             if voice.isRecording {
+                isAmountFocused = false
                 voice.finish()
             } else {
-                let aliases = (try? model.ledger.confirmedAliases().map(\.name)) ?? []
-                let contextual = Array((model.payees.map(\.name) + aliases).prefix(100))
-                Task {
-                    await voice.start(contextualStrings: contextual)
-                }
+                startListening()
             }
         } label: {
             Image(systemName: voice.isRecording ? "stop.circle.fill" : "mic")
@@ -431,6 +438,15 @@ struct AddEntrySheet: View {
         .disabled(voice.isPreparing || model.isInterpretingSpeech)
         .accessibilityLabel(voice.isRecording ? "Stop listening" : "Fill from speech")
         .accessibilityHint("Fills the card from on-device speech. Review the fields and tap Save.")
+    }
+
+    private func startListening() {
+        isAmountFocused = false
+        let aliases = (try? model.ledger.confirmedAliases().map(\.name)) ?? []
+        let contextual = Array((model.payees.map(\.name) + aliases).prefix(100))
+        Task {
+            await voice.start(contextualStrings: contextual)
+        }
     }
 }
 

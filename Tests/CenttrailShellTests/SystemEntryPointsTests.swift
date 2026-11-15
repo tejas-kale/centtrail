@@ -17,6 +17,7 @@ struct SystemEntryPointsTests {
         _ = try await AddExpenseIntent().perform()
 
         #expect(model.isPresentingAddSheet == true)
+        #expect(model.shouldStartListening == true)
         #expect(model.amountText.isEmpty)
         #expect(model.payee.isEmpty)
         #expect(model.kind == .expense)
@@ -33,6 +34,7 @@ struct SystemEntryPointsTests {
 
         let model = try CaptureModel(ledger: ledger, today: today)
         #expect(model.isPresentingAddSheet == true)
+        #expect(model.shouldStartListening == true)
         #expect(try ledger.transactions().isEmpty)
     }
 
@@ -42,7 +44,7 @@ struct SystemEntryPointsTests {
     }
 
     @MainActor
-    @Test func centtrailNewEntryNotificationOpensAddSheetWithoutSaving() throws {
+    @Test func centtrailNewEntryNotificationOpensAddSheetWithoutListeningOrSaving() throws {
         _ = CenttrailEntryTrigger.shared.consumePendingNewEntry()
         let ledger = try Ledger.openInMemory()
         let today = try #require(ReportingDate(iso8601: "2026-11-14"))
@@ -52,6 +54,25 @@ struct SystemEntryPointsTests {
         NotificationCenter.default.post(name: .centtrailNewEntry, object: nil)
 
         #expect(model.isPresentingAddSheet == true)
+        #expect(model.shouldStartListening == false)
         #expect(try ledger.transactions().isEmpty)
+    }
+
+    @MainActor
+    @Test func inAppAddOpensAddSheetWithoutListeningAndConsumeClearsListeningFlag() async throws {
+        _ = CenttrailEntryTrigger.shared.consumePendingNewEntry()
+        let ledger = try Ledger.openInMemory()
+        let today = try #require(ReportingDate(iso8601: "2026-11-14"))
+        let model = try CaptureModel(ledger: ledger, today: today)
+
+        model.openAddSheet()
+        #expect(model.isPresentingAddSheet == true)
+        #expect(model.shouldStartListening == false)
+        #expect(model.consumeStartListening() == false)
+
+        _ = try await AddExpenseIntent().perform()
+        #expect(model.consumeStartListening() == true)
+        #expect(model.shouldStartListening == false)
+        #expect(model.consumeStartListening() == false)
     }
 }
