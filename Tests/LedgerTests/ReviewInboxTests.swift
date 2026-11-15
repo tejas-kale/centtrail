@@ -156,13 +156,13 @@ import Testing
     ))
 
     let summary = try ledger.monthSummary(on: today)
-    #expect(summary.spendingCents == 3350)
+    #expect(summary.spendingByCurrency == [.eur: 3350])
     #expect(summary.reviewCount == 3)
     #expect(try ledger.runReport(.currentMonthSpending, today: today) == .spendingTotal(SignedCents(3350)))
 
     try ledger.setCategory(supermarket.id, for: novReviewExpense.id)
     let updatedSummary = try ledger.monthSummary(on: today)
-    #expect(updatedSummary.spendingCents == 3350)
+    #expect(updatedSummary.spendingByCurrency == [.eur: 3350])
     #expect(updatedSummary.reviewCount == 2)
 }
 
