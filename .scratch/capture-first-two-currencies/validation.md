@@ -18,6 +18,16 @@ Log: `/private/tmp/centtrail-capture-baseline.log`.
 
 Simulator discovery (`xcrun simctl list devices available`, with Xcode selected) returned no devices. iPhone Air Action button, Lock Screen, Siri, microphone behavior and visual Dynamic Type/dark-mode checks require device validation. Build validation does not establish those outcomes.
 
+## Platform build setup
+
+Ask-removal integration iOS app build passed using Xcode destination-based SDK selection:
+
+```sh
+/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Apps/Centtrail.xcodeproj -scheme CenttrailIOS -destination 'generic/platform=iOS Simulator' -derivedDataPath build/v2-ios -skipMacroValidation CODE_SIGNING_ALLOWED=NO build
+```
+
+Log: `/private/tmp/centtrail-capture-ios-destination.log`. Omit the explicit `-sdk iphonesimulator` argument: it incorrectly forces third-party macro executables to target iOS rather than their Mac host.
+
 ## Final checks
 
 Pending integration completion.
