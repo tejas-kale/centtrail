@@ -39,4 +39,35 @@ extension SystemEntryPointsTests {
         #expect(model.transactions.map(\.payee!.name) == ["REWE"])
         #expect(model.monthSummary?.spendingCents == 1250)
     }
+
+    @MainActor
+    @Test func reviewInboxOpensInCaptureCardAndClearsOnSave() throws {
+        let ledger = try Ledger.openInMemory()
+        let today = try #require(ReportingDate(iso8601: "2026-11-14"))
+        let account = try ledger.accounts()[0]
+        let reviewEntry = try ledger.recordForReview(EntryDraft(
+            amount: Cents(950),
+            kind: .expense,
+            payee: "New Bakery",
+            reportingDate: today,
+            accountID: account.id
+        ))
+
+        let model = try CaptureModel(ledger: ledger, today: today)
+        #expect(model.monthSummary?.reviewCount == 1)
+        #expect(model.reviewInbox.map(\.id) == [reviewEntry.id])
+
+        model.openEditSheet(reviewEntry)
+        #expect(model.isPresentingAddSheet == true)
+        #expect(model.categoryID == nil)
+
+        let restaurant = try #require(model.categories.first { $0.name == "Restaurant" })
+        model.categoryID = restaurant.id
+        model.noteManualCategory()
+        #expect(model.save() == true)
+
+        #expect(model.monthSummary?.reviewCount == 0)
+        #expect(model.reviewInbox.isEmpty)
+        #expect(try ledger.defaultCategory(forPayeeName: "New Bakery") == restaurant)
+    }
 }

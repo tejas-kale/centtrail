@@ -37,6 +37,16 @@ struct HomeScreen: View {
                         }
                         .padding(.vertical, 4)
                     }
+
+                    if summary.reviewCount > 0 {
+                        Section {
+                            NavigationLink {
+                                ReviewInboxScreen(model: model)
+                            } label: {
+                                Label("\(summary.reviewCount) to review", systemImage: "tray.full")
+                            }
+                        }
+                    }
                 }
 
                 Section("Recent transactions") {
@@ -73,6 +83,38 @@ struct HomeScreen: View {
                 }
             }
         }
+    }
+}
+
+struct ReviewInboxScreen: View {
+    @ObservedObject var model: CaptureModel
+
+    var body: some View {
+        List {
+            if model.reviewInbox.isEmpty {
+                ContentUnavailableView(
+                    "All caught up",
+                    systemImage: "checkmark.circle",
+                    description: Text("No entries need review.")
+                )
+            } else {
+                ForEach(model.reviewInbox) { transaction in
+                    Button {
+                        model.openEditSheet(transaction)
+                    } label: {
+                        TransactionRow(transaction: transaction)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .swipeActions {
+                        Button("Trash", role: .destructive) {
+                            model.trash(transaction)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("To review")
     }
 }
 

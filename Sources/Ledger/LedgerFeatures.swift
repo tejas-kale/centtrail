@@ -17,7 +17,8 @@ SELECT
     entry_category.id,
     entry_category.name,
     entry_category.counts_as_spending,
-    account.id, account.name, destination.id, destination.name
+    account.id, account.name, destination.id, destination.name,
+    entry.needs_review
 FROM entry
 LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
 LEFT JOIN effective_category AS entry_category ON entry_category.id = entry.category_id
@@ -37,20 +38,22 @@ extension Ledger {
         accountID: Account.ID,
         destinationAccountID: Account.ID?,
         provenance: CategoryProvenance,
-        note: String?
+        note: String?,
+        needsReview: Bool = false
     ) throws {
         try connection.execute(
             """
             INSERT INTO entry (
                 id, amount_cents, kind, counterparty_id, reporting_date, category_id,
-                category_provenance, note, account_id, destination_account_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                category_provenance, note, account_id, destination_account_id, needs_review
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 amount_cents = excluded.amount_cents, kind = excluded.kind,
                 counterparty_id = excluded.counterparty_id, reporting_date = excluded.reporting_date,
                 category_id = excluded.category_id, category_provenance = excluded.category_provenance,
                 note = excluded.note, account_id = excluded.account_id,
-                destination_account_id = excluded.destination_account_id
+                destination_account_id = excluded.destination_account_id,
+                needs_review = excluded.needs_review
             """,
             bindings: [
                 .text(stored(id)),
@@ -63,6 +66,7 @@ extension Ledger {
                 note.map(SQLiteValue.text) ?? .null,
                 .text(stored(accountID.rawValue)),
                 destinationAccountID.map { .text(stored($0.rawValue)) } ?? .null,
+                .integer(needsReview ? 1 : 0),
             ]
         )
     }
@@ -81,14 +85,15 @@ extension Ledger {
     }
 
     func decodeTransaction(_ row: [SQLiteValue]) throws -> Transaction {
-        guard row.count == 19,
+        guard row.count == 20,
               let entryID = row[0].text.flatMap(UUID.init(uuidString:)),
               let cents = row[1].integer,
               let kind = row[2].text.flatMap(Kind.init(rawValue:)),
               let reportingDate = row[3].text.flatMap(ReportingDate.init(iso8601:)),
               let provenance = row[4].text.flatMap(CategoryProvenance.init(rawValue:)),
               let accountID = row[15].text.flatMap(UUID.init(uuidString:)),
-              let accountName = row[16].text
+              let accountName = row[16].text,
+              let needsReview = row[19].integer
         else {
             throw LedgerError(message: "The ledger returned an entry it could not read.")
         }
@@ -112,7 +117,8 @@ extension Ledger {
             account: Account(id: Account.ID(rawValue: accountID), name: accountName),
             destinationAccount: destination,
             categoryProvenance: provenance,
-            note: note
+            note: note,
+            needsReview: needsReview != 0
         )
     }
 
@@ -162,6 +168,9 @@ extension Ledger {
     }
 
     public func setDefaultCategory(_ categoryID: Category.ID, for payeeID: Payee.ID) throws {
+        guard categoryID.rawValue != OwnerCategories.uncategorisedID else {
+            throw LedgerError(message: "Uncategorised cannot be a payee's default category.")
+        }
         _ = try category(id: categoryID)
         try connection.inTransaction {
             try connection.execute(
@@ -181,18 +190,36 @@ extension Ledger {
     }
 
     public func setCategory(_ categoryID: Category.ID, for entryID: Transaction.ID) throws {
+        guard categoryID.rawValue != OwnerCategories.uncategorisedID else {
+            throw LedgerError(message: "Choose a category other than Uncategorised.")
+        }
         _ = try category(id: categoryID)
-        guard try transaction(id: entryID).kind != .transfer else {
+        let existing = try transaction(id: entryID)
+        guard existing.kind != .transfer else {
             throw LedgerError(message: "Transfers do not have a category.")
         }
         try connection.inTransaction {
+            var provenance: CategoryProvenance = .overridden
+            if existing.needsReview, let payee = existing.payee, payee.defaultCategory == nil {
+                try connection.execute(
+                    "UPDATE counterparty SET default_category_id = ? WHERE id = ? AND default_category_id IS NULL",
+                    bindings: [.text(stored(categoryID.rawValue)), .text(stored(payee.id.rawValue))]
+                )
+                provenance = .inherited
+            } else if existing.needsReview, existing.payee?.defaultCategory?.id == categoryID {
+                provenance = .inherited
+            }
             try connection.execute(
                 """
                 UPDATE entry
-                SET category_id = ?, category_provenance = 'overridden'
+                SET category_id = ?, category_provenance = ?, needs_review = 0
                 WHERE id = ?
                 """,
-                bindings: [.text(stored(categoryID.rawValue)), .text(stored(entryID.rawValue))]
+                bindings: [
+                    .text(stored(categoryID.rawValue)),
+                    .text(provenance.rawValue),
+                    .text(stored(entryID.rawValue)),
+                ]
             )
         }
     }
@@ -359,6 +386,9 @@ extension Ledger {
 
     @discardableResult
     public func renameCategory(id: Category.ID, to newName: String) throws -> Category {
+        guard id.rawValue != OwnerCategories.uncategorisedID else {
+            throw LedgerError(message: "Uncategorised is a reserved category.")
+        }
         let current = try category(id: id)
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -376,6 +406,9 @@ extension Ledger {
     }
 
     public func removeCategory(id: Category.ID) throws {
+        guard id.rawValue != OwnerCategories.uncategorisedID else {
+            throw LedgerError(message: "Uncategorised is a reserved category.")
+        }
         let current = try category(id: id)
         let entryRows = try connection.query(
             "SELECT COUNT(*) FROM entry WHERE category_id = ?",

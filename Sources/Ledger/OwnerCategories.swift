@@ -4,6 +4,9 @@ import Foundation
 /// Category names as supplied for v1. Bureaucracy keeps the trailing space
 /// from the source list; seeding trims surrounding whitespace.
 enum OwnerCategories {
+    static let uncategorisedName = "Uncategorised"
+    static let uncategorisedID = deterministicID(for: uncategorisedName)
+
     static let sourceNames = [
         "Anagha",
         "Bureaucracy ",

@@ -31,6 +31,7 @@ final class CaptureModel: ObservableObject {
         frequentPayeesByKind[kind] ?? []
     }
     @Published var transactions: [LedgerTransaction] = []
+    @Published var reviewInbox: [LedgerTransaction] = []
     @Published var monthSummary: MonthSummary?
     @Published var isPresentingAddSheet = false
     @Published var draftMessage: String?
@@ -85,8 +86,13 @@ final class CaptureModel: ObservableObject {
         kind = transaction.kind
         payee = transaction.payee?.name ?? ""
         selectedDate = Self.date(from: transaction.reportingDate)
-        categoryID = transaction.category?.id
-        categoryChosenManually = transaction.categoryProvenance == .overridden
+        if transaction.needsReview {
+            categoryID = transaction.payee?.defaultCategory?.id
+            categoryChosenManually = false
+        } else {
+            categoryID = transaction.category?.id
+            categoryChosenManually = transaction.categoryProvenance == .overridden
+        }
         accountID = transaction.account.id
         destinationAccountID = transaction.destinationAccount?.id
         draftNote = transaction.note ?? ""
@@ -276,6 +282,7 @@ final class CaptureModel: ObservableObject {
             .income: try ledger.frequentPayees(kind: .income),
         ]
         transactions = try ledger.transactions()
+        reviewInbox = try ledger.reviewInbox()
         monthSummary = try ledger.monthSummary(on: today)
     }
 
