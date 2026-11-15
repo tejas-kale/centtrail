@@ -3,28 +3,32 @@ import Foundation
 
 @MainActor
 final class CenttrailEntryTrigger {
+    struct PendingEntry {
+        let startListening: Bool
+    }
+
     static let shared = CenttrailEntryTrigger()
 
-    private var hasPendingNewEntry = false
+    private var pendingEntry: PendingEntry?
 
     private init() {}
 
-    func triggerNewEntry() {
-        hasPendingNewEntry = true
+    func triggerNewEntry(startListening: Bool = false) {
+        pendingEntry = PendingEntry(startListening: startListening)
         NotificationCenter.default.post(name: .centtrailNewEntry, object: nil)
     }
 
-    func consumePendingNewEntry() -> Bool {
-        guard hasPendingNewEntry else { return false }
-        hasPendingNewEntry = false
-        return true
+    @discardableResult
+    func consumePendingNewEntry() -> PendingEntry? {
+        defer { pendingEntry = nil }
+        return pendingEntry
     }
 }
 
 public struct AddExpenseIntent: AppIntent {
     public static let title: LocalizedStringResource = "Add expense"
     public static let description = IntentDescription(
-        "Opens an editable Centtrail entry form. Nothing is saved until you tap Save."
+        "Opens the Centtrail capture card in listening mode. Nothing is saved until you tap Save."
     )
     public static let openAppWhenRun = true
 
@@ -32,7 +36,7 @@ public struct AddExpenseIntent: AppIntent {
 
     public func perform() async throws -> some IntentResult {
         await MainActor.run {
-            CenttrailEntryTrigger.shared.triggerNewEntry()
+            CenttrailEntryTrigger.shared.triggerNewEntry(startListening: true)
         }
         return .result()
     }
