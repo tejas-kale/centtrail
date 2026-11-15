@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** implemented; awaiting iOS integration build
+**Status:** complete
 
 - [x] The tab bar / Mac sidebar has no Ask destination, on iPhone and Mac.
 - [x] Report-interpretation code and its tests (Ask chat, Ask evaluation, report follow-up, question period) are deleted.
 - [x] Voice capture still fills the capture form; the existing voice capture tests pass.
 - [x] Ledger report calculations still used by Home remain and their tests pass.
-- [ ] The package builds for iOS and macOS with no unused Interpreter report types left.
+- [x] The package builds for iOS and macOS with no unused Interpreter report types left.
 
-Validation: macOS `swift test --skip-update` passed, including voice capture and Ledger report calculations. iOS app compile was attempted but blocked in dependency macro targets by unresolved SwiftSyntax/SwiftCompilerPlugin modules before application compilation; its final acceptance checkbox stays open until an integration build succeeds. Log: `/private/tmp/centtrail-01-ios.log`.
+Validation: macOS package tests passed (81 Ledger/Interpreter and 6 Shell tests). iOS app build passed with destination-based SDK selection; explicit `-sdk iphonesimulator` incorrectly targeted third-party macro executables at iOS. Log: `/private/tmp/centtrail-capture-ios-destination.log`.
