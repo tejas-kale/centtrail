@@ -96,13 +96,6 @@ extension Ledger {
                 }
             }
         }
-        for payee in acceptedPayees {
-            let name = payee.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let id = try resolvePayeeID(named: name) else { continue }
-            if try proposedCategoryID(for: id) != nil {
-                try acceptProposedPayeeDefault(for: Payee.ID(rawValue: id))
-            }
-        }
         return ImportCommitResult(importedCount: imported, skippedCount: classified.count - imported)
     }
 
@@ -287,33 +280,10 @@ extension Ledger {
         return categoryName
     }
 
+    /// Retained for callers displaying old import proposals. Opening a ledger
+    /// applies those proposals, and new imports learn defaults immediately.
     public func proposedPayeeDefaults() throws -> [ProposedPayeeDefault] {
-        let rows = try connection.query(
-            """
-            SELECT counterparty.id, counterparty.name, category.name
-            FROM proposed_payee_default
-            JOIN counterparty ON counterparty.id = proposed_payee_default.counterparty_id
-            JOIN effective_category AS category ON category.id = proposed_payee_default.category_id
-            ORDER BY counterparty.name
-            """
-        )
-        return try rows.map { row in
-            guard row.count == 3,
-                  let id = row[0].text.flatMap(UUID.init(uuidString:)),
-                  let payee = row[1].text,
-                  let categoryName = row[2].text
-            else {
-                throw LedgerError(message: "The ledger returned a proposed default it could not read.")
-            }
-            return ProposedPayeeDefault(payeeID: Payee.ID(rawValue: id), payee: payee, categoryName: categoryName)
-        }
-    }
-
-    public func acceptProposedPayeeDefault(for payeeID: Payee.ID) throws {
-        guard let categoryID = try proposedCategoryID(for: payeeID.rawValue) else {
-            throw LedgerError(message: "That payee has no proposed default.")
-        }
-        try setDefaultCategory(categoryID, for: payeeID)
+        []
     }
 
     private func commit(_ item: ClassifiedImport) throws {
@@ -323,7 +293,7 @@ extension Ledger {
         } else {
             draft.accountID = try addAccount(name: fingerprint.sourceAccount).id
         }
-        let recorded = try record(draft, proposeDefaultForNewPayee: true)
+        let recorded = try record(draft)
         try connection.execute(
             """
             INSERT INTO import_row (id, entry_id, source_timestamp, amount_cents, payee, source_account)

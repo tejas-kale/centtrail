@@ -177,10 +177,6 @@ extension Ledger {
                 """,
                 bindings: [.text(stored(categoryID.rawValue)), .text(stored(payeeID.rawValue))]
             )
-            try connection.execute(
-                "DELETE FROM proposed_payee_default WHERE counterparty_id = ?",
-                bindings: [.text(stored(payeeID.rawValue))]
-            )
         }
     }
 
@@ -257,8 +253,7 @@ extension Ledger {
                 bindings: [.text(stored(category.id.rawValue)), .text(stored(sourceID))]
             )
         } else {
-            // A payee awaiting import-default acceptance has no category to
-            // inherit. Keep the source classification as an explicit choice.
+            // Preserve classification when the surviving payee has no default.
             try connection.execute(
                 "UPDATE entry SET category_provenance = 'overridden' WHERE counterparty_id = ? AND category_provenance = 'inherited'",
                 bindings: [.text(stored(sourceID))]
@@ -271,10 +266,6 @@ extension Ledger {
         try connection.execute(
             "UPDATE counterparty_alias SET counterparty_id = ? WHERE counterparty_id = ?",
             bindings: [.text(stored(targetID)), .text(stored(sourceID))]
-        )
-        try connection.execute(
-            "DELETE FROM proposed_payee_default WHERE counterparty_id = ?",
-            bindings: [.text(stored(sourceID))]
         )
         try connection.execute(
             "DELETE FROM counterparty WHERE id = ?",
@@ -402,11 +393,7 @@ extension Ledger {
             "SELECT COUNT(*) FROM counterparty WHERE default_category_id = ?",
             bindings: [.text(stored(id.rawValue))]
         )
-        let proposedRows = try connection.query(
-            "SELECT COUNT(*) FROM proposed_payee_default WHERE category_id = ?",
-            bindings: [.text(stored(id.rawValue))]
-        )
-        let payeeCount = Int(payeeRows.first?.first?.integer ?? 0) + Int(proposedRows.first?.first?.integer ?? 0)
+        let payeeCount = Int(payeeRows.first?.first?.integer ?? 0)
         if payeeCount > 0 {
             throw LedgerError(
                 message: "Cannot remove \"\(current.name)\" because it is the default category for a payee."

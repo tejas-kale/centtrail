@@ -59,7 +59,7 @@ public final class Ledger {
     }
 
     public func record(_ draft: EntryDraft) throws -> Transaction {
-        try record(draft, proposeDefaultForNewPayee: false)
+        try record(draft, entryID: UUID())
     }
 
     /// Replaces the editable fields in one transaction, preserving identity,
@@ -67,11 +67,11 @@ public final class Ledger {
     public func update(_ id: Transaction.ID, with draft: EntryDraft) throws -> Transaction {
         try connection.inTransaction {
             _ = try transaction(id: id)
-            return try record(draft, proposeDefaultForNewPayee: false, entryID: id.rawValue)
+            return try record(draft, entryID: id.rawValue)
         }
     }
 
-    func record(_ draft: EntryDraft, proposeDefaultForNewPayee: Bool, entryID: UUID = UUID()) throws -> Transaction {
+    func record(_ draft: EntryDraft, entryID: UUID) throws -> Transaction {
         let payeeName = draft.payee?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var missing: Set<EntryField> = []
         if draft.amount == nil { missing.insert(.amount) }
@@ -107,16 +107,13 @@ public final class Ledger {
         return try connection.inTransaction {
             let payeeID = try findOrCreatePayee(
                 named: payeeName,
-                defaultCategory: category.id,
-                proposeInsteadOfApplying: proposeDefaultForNewPayee
+                defaultCategory: category.id
             )
             let storedPayee = try requirePayee(id: payeeID)
-            let proposedCategoryID = try proposedCategoryID(for: payeeID)
             let provenance = categoryProvenance(
                 draft: draft,
                 payee: storedPayee,
-                category: category,
-                proposedCategoryID: proposedCategoryID
+                category: category
             )
             try insertEntry(
                 id: entryID,
@@ -162,51 +159,32 @@ public final class Ledger {
 
     func findOrCreatePayee(
         named name: String,
-        defaultCategory: Category.ID,
-        proposeInsteadOfApplying: Bool = false
+        defaultCategory: Category.ID
     ) throws -> UUID {
         if let resolved = try resolvePayeeID(named: name) {
+            try connection.execute(
+                "UPDATE counterparty SET default_category_id = ? WHERE id = ? AND default_category_id IS NULL",
+                bindings: [.text(stored(defaultCategory.rawValue)), .text(stored(resolved))]
+            )
             return resolved
         }
         let id = UUID()
-        if proposeInsteadOfApplying {
-            try connection.execute(
-                "INSERT INTO counterparty (id, name, default_category_id) VALUES (?, ?, NULL)",
-                bindings: [.text(stored(id)), .text(name)]
-            )
-            try connection.execute(
-                "INSERT INTO proposed_payee_default (counterparty_id, category_id) VALUES (?, ?)",
-                bindings: [.text(stored(id)), .text(stored(defaultCategory.rawValue))]
-            )
-        } else {
-            try connection.execute(
-                "INSERT INTO counterparty (id, name, default_category_id) VALUES (?, ?, ?)",
-                bindings: [.text(stored(id)), .text(name), .text(stored(defaultCategory.rawValue))]
-            )
-        }
-        return id
-    }
-
-    func proposedCategoryID(for payeeID: UUID) throws -> Category.ID? {
-        let rows = try connection.query(
-            "SELECT category_id FROM proposed_payee_default WHERE counterparty_id = ?",
-            bindings: [.text(stored(payeeID))]
+        try connection.execute(
+            "INSERT INTO counterparty (id, name, default_category_id) VALUES (?, ?, ?)",
+            bindings: [.text(stored(id)), .text(name), .text(stored(defaultCategory.rawValue))]
         )
-        guard let text = rows.first?.first?.text, let id = UUID(uuidString: text) else { return nil }
-        return Category.ID(rawValue: id)
+        return id
     }
 
     private func categoryProvenance(
         draft: EntryDraft,
         payee: Payee,
-        category: Category,
-        proposedCategoryID: Category.ID?
+        category: Category
     ) -> CategoryProvenance {
         if draft.overridesCategory { return .overridden }
         if let defaultCategory = payee.defaultCategory {
             return defaultCategory.id == category.id ? .inherited : .overridden
         }
-        if proposedCategoryID == category.id { return .inherited }
         return .overridden
     }
 
