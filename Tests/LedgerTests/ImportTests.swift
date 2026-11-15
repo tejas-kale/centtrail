@@ -19,16 +19,7 @@ import Testing
     #expect(names.contains("REWE"))
     #expect(names.contains("WinSIM"))
     #expect(names.contains("REWE ") == false)
-    #expect(try ledger.defaultCategory(forPayeeName: "ALDI Data and Analytics") == nil)
-    #expect(try ledger.defaultCategory(forPayeeName: "Middle Eats") == nil)
-    #expect(try ledger.defaultCategory(forPayeeName: "WinSIM") == nil)
-    let proposals = try ledger.proposedPayeeDefaults()
-    #expect(proposals.first { $0.payee == "ALDI Data and Analytics" }?.categoryName == "Salary")
-    #expect(proposals.first { $0.payee == "Middle Eats" }?.categoryName == "Restaurant")
-    #expect(proposals.first { $0.payee == "WinSIM" }?.categoryName == "Utilities")
-    for proposal in proposals where ["ALDI Data and Analytics", "Middle Eats", "WinSIM"].contains(proposal.payee) {
-        try ledger.acceptProposedPayeeDefault(for: proposal.payeeID)
-    }
+    #expect(try ledger.proposedPayeeDefaults().isEmpty)
     #expect(try ledger.defaultCategory(forPayeeName: "ALDI Data and Analytics")?.name == "Salary")
     #expect(try ledger.defaultCategory(forPayeeName: "Middle Eats")?.name == "Restaurant")
     #expect(try ledger.defaultCategory(forPayeeName: "WinSIM")?.name == "Utilities")
@@ -87,7 +78,7 @@ import Testing
     #expect(dates == ["2025-12-31", "2026-01-01"])
 }
 
-@Test func aNewPayeeProposesItsCategoryUntilTheOwnerAccepts() throws {
+@Test func anImportedPayeeKeepsItsFirstCategoryAndLaterOverridesAfterReopening() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let url = directory.appendingPathComponent("ledger.sqlite")
@@ -107,9 +98,8 @@ import Testing
         #expect(preview[1].proposedDefaultCategoryName == nil)
         #expect(preview[2].proposedDefaultCategoryName == nil)
         #expect(try ledger.commitImport(csv).importedCount == 3)
-        #expect(try ledger.defaultCategory(forPayeeName: "Cafe") == nil)
-        #expect(try ledger.proposedPayeeDefaults().map(\.payee) == ["Cafe"])
-        #expect(try ledger.proposedPayeeDefaults().map(\.categoryName) == ["Restaurant"])
+        #expect(try ledger.defaultCategory(forPayeeName: "Cafe")?.name == "Restaurant")
+        #expect(try ledger.proposedPayeeDefaults().isEmpty)
         let cafeEntries = try ledger.transactions().filter { $0.payee!.name == "Cafe" }
         #expect(cafeEntries.compactMap(\.category?.name).sorted() == ["Restaurant", "Supermarket"])
         #expect(cafeEntries.first { $0.category!.name == "Restaurant" }?.categoryProvenance == .inherited)
@@ -119,27 +109,23 @@ import Testing
         #expect(aliasEntry?.payee!.defaultCategory?.name == "Supermarket")
     }
     let reopened = try Ledger.open(at: url)
-    #expect(try reopened.defaultCategory(forPayeeName: "Cafe") == nil)
-    let proposal = try #require(try reopened.proposedPayeeDefaults().first)
-    #expect(proposal.payee == "Cafe")
-    #expect(proposal.categoryName == "Restaurant")
-    try reopened.acceptProposedPayeeDefault(for: proposal.payeeID)
     #expect(try reopened.defaultCategory(forPayeeName: "Cafe")?.name == "Restaurant")
     #expect(try reopened.proposedPayeeDefaults().isEmpty)
+    let cafe = try #require(try reopened.payees().first { $0.name == "Cafe" })
     let hotel = try namedCategory(reopened, "Hotel")
-    try reopened.setDefaultCategory(hotel.id, for: proposal.payeeID)
+    try reopened.setDefaultCategory(hotel.id, for: cafe.id)
     let afterChange = try reopened.transactions().filter { $0.payee!.name == "Cafe" }
     #expect(afterChange.first { $0.categoryProvenance == .inherited }?.category!.name == "Hotel")
     #expect(afterChange.first { $0.categoryProvenance == .overridden }?.category!.name == "Supermarket")
 }
 
-@Test func acceptingAProposedDefaultDuringCommitAppliesIt() throws {
+@Test func importingAppliesADefaultWithoutAnAcceptanceSelection() throws {
     let ledger = try Ledger.openInMemory()
     let csv = """
     Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
     2026-04-01T10:00:00+0200,-10.00,EUR,EUR,1.0,Cafe,Restaurant,Cash,
     """
-    #expect(try ledger.commitImport(csv, acceptedPayees: ["Cafe"]).importedCount == 1)
+    #expect(try ledger.commitImport(csv).importedCount == 1)
     #expect(try ledger.defaultCategory(forPayeeName: "Cafe")?.name == "Restaurant")
     #expect(try ledger.proposedPayeeDefaults().isEmpty)
 }
@@ -234,4 +220,18 @@ import Testing
     """
     let preview = try ledger.previewImport(csv)
     #expect(preview.first?.state == .uncertainMatch)
+}
+
+@Test func importedPayeesImmediatelyPrefillTheirCategoryByNameAndAlias() throws {
+    let ledger = try Ledger.openInMemory()
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-01,-12.50,EUR,EUR,1.0,Lidl,Supermarket,Cash,
+    """
+    _ = try ledger.commitImport(csv)
+    #expect(try ledger.defaultCategory(forPayeeName: "lidl")?.name == "Supermarket")
+    let payee = try #require(try ledger.payees().first { $0.name == "Lidl" })
+    try ledger.confirmAlias("LIDL BERLIN", of: payee.id)
+    #expect(try ledger.defaultCategory(forPayeeName: "lidl berlin")?.name == "Supermarket")
+    #expect(try ledger.proposedPayeeDefaults().isEmpty)
 }

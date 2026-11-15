@@ -77,16 +77,6 @@ struct ImportRowRecord: Identifiable, Sendable {
     var sourceAccount: String = ""
 }
 
-@Table("proposed_payee_default")
-struct ProposedPayeeDefaultRecord: Identifiable, Sendable {
-    @Column("counterparty_id", primaryKey: true)
-    let payeeID: UUID
-    @Column("category_id")
-    var categoryID: UUID
-
-    var id: UUID { payeeID }
-}
-
 private final class DatabaseBox: @unchecked Sendable {
     let db: Database
     init(_ db: Database) { self.db = db }
@@ -236,6 +226,25 @@ final class SQLiteConnection {
         migrator.registerMigration("v2_drop_ledger_initialization") { db in
             try db.execute(sql: "DROP TABLE IF EXISTS ledger_initialization")
         }
+        migrator.registerMigration("v3_apply_payee_defaults") { db in
+            try db.execute(sql: """
+                UPDATE counterparty
+                SET default_category_id = (
+                    SELECT category_id FROM proposed_payee_default
+                    WHERE counterparty_id = counterparty.id
+                )
+                WHERE default_category_id IS NULL
+                  AND id IN (SELECT counterparty_id FROM proposed_payee_default);
+                UPDATE entry
+                SET category_id = (
+                    SELECT default_category_id FROM counterparty
+                    WHERE counterparty.id = entry.counterparty_id
+                )
+                WHERE category_provenance = 'inherited'
+                  AND counterparty_id IN (SELECT counterparty_id FROM proposed_payee_default);
+                DROP TABLE proposed_payee_default;
+                """)
+        }
         try migrator.migrate(database)
 
         switch syncMode {
@@ -259,7 +268,6 @@ final class SQLiteConnection {
             EntryRecord.self,
             PayeeAliasRecord.self,
             ImportRowRecord.self,
-            ProposedPayeeDefaultRecord.self,
             containerIdentifier: containerIdentifier
         )
     }
@@ -363,7 +371,7 @@ public final class LedgerObservation {
 }
 
 extension SQLiteConnection {
-    static let ledgerTables = ["reference_customization", "account", "category", "counterparty", "entry", "counterparty_alias", "import_row", "proposed_payee_default"]
+    static let ledgerTables = ["reference_customization", "account", "category", "counterparty", "entry", "counterparty_alias", "import_row"]
 
     func observeChanges(_ onChange: @escaping @Sendable () -> Void) -> LedgerObservation {
         let regions = Self.ledgerTables.map { GRDB.Table($0) as any DatabaseRegionConvertible }
