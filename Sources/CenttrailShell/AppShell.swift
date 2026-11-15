@@ -153,67 +153,14 @@ struct AddEntrySheet: View {
     @ObservedObject var model: CaptureModel
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isAmountFocused: Bool
+    @ScaledMetric(relativeTo: .largeTitle) private var amountFontSize = 52
+    @State private var isChoosingDate = false
     @StateObject private var voice = VoiceCapture()
-
-    private var missingFieldMessage: String? {
-        guard Cents(euroText: model.amountText) != nil else { return "Enter an amount." }
-        guard model.accountID != nil else { return "Choose an account." }
-        if model.kind == .transfer {
-            guard let destination = model.destinationAccountID else { return "Choose a destination account." }
-            guard destination != model.accountID else { return "Choose two different accounts." }
-        } else {
-            guard !model.payee.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Enter a payee." }
-            guard model.categoryID != nil else { return "Choose a category." }
-        }
-        return nil
-    }
-
-    private var payeeSuggestions: [Payee] {
-        let query = model.payee.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return [] }
-        return Array(
-            model.payees
-                .filter {
-                    $0.name.localizedCaseInsensitiveContains(query)
-                        && $0.name != query
-                }
-                .prefix(5)
-        )
-    }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Button {
-                        if voice.isRecording {
-                            voice.finish()
-                        } else {
-                            Task {
-                                await voice.start(contextualStrings: Array((model.payees.map(\.name) + model.accounts.map(\.name)).prefix(100)))
-                            }
-                        }
-                    } label: {
-                        Label(voice.isRecording ? "Stop listening" : "Fill from speech", systemImage: voice.isRecording ? "stop.circle.fill" : "mic")
-                    }
-                    .disabled(voice.isPreparing || model.isInterpretingSpeech || model.kind == .transfer)
-                    .accessibilityHint("Fills the form from on-device speech. Review the fields and tap Save to record the transaction.")
-                    if voice.isPreparing {
-                        ProgressView("Preparing microphone")
-                    } else if voice.isRecording {
-                        Text("Listening… Tap Stop when you're finished.")
-                            .foregroundStyle(.secondary)
-                    } else if model.isInterpretingSpeech {
-                        ProgressView("Filling the form")
-                    }
-                    if !voice.transcript.isEmpty {
-                        Text(voice.transcript)
-                        Text("Review the fields, then tap Save.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Section {
+            ScrollView {
+                VStack(spacing: 24) {
                     Picker("Kind", selection: $model.kind) {
                         Text("Expense").tag(Kind.expense)
                         Text("Income").tag(Kind.income)
@@ -221,87 +168,127 @@ struct AddEntrySheet: View {
                     }
                     .pickerStyle(.segmented)
 
-                    TextField("Amount", text: $model.amountText, prompt: Text("0.00"))
-                        .focused($isAmountFocused)
-                        #if os(iOS)
-                        .keyboardType(.decimalPad)
-                        #endif
-                }
+                    HStack(spacing: 8) {
+                        Text("€").foregroundStyle(.secondary)
+                        TextField("Amount", text: $model.amountText, prompt: Text("0.00"))
+                            .focused($isAmountFocused)
+                            .multilineTextAlignment(.center)
+                            #if os(iOS)
+                            .keyboardType(.decimalPad)
+                            #endif
+                    }
+                    .font(.system(size: amountFontSize, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .textFieldStyle(.plain)
+                    .accessibilityElement(children: .contain)
 
-                if model.kind != .transfer {
-                    if !model.frequentPayees.isEmpty {
-                        Section("Frequent payees") {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack {
-                                    ForEach(model.frequentPayees) { suggestion in
-                                        Button(suggestion.payee.name) {
-                                            model.selectFrequentPayee(suggestion)
-                                            isAmountFocused = true
+                    if model.kind != .transfer {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                TextField("Payee", text: $model.payee, prompt: Text("Who was paid"))
+                                    .font(.title3)
+                                    .textFieldStyle(.plain)
+                                    .onChange(of: model.payee) { _, _ in model.prefillCategory() }
+                                microphoneButton
+                            }
+                            if !model.payeeSuggestions.isEmpty {
+                                ForEach(model.payeeSuggestions) { suggestion in
+                                    Button {
+                                        model.selectSuggestedPayee(suggestion.name)
+                                    } label: {
+                                        HStack {
+                                            Text(suggestion.name)
+                                            Spacer()
+                                            if let category = suggestion.defaultCategory {
+                                                Text(category.name).font(.footnote).foregroundStyle(.secondary)
+                                            }
                                         }
-                                        .buttonStyle(.bordered)
-                                        .buttonBorderShape(.capsule)
-                                        .accessibilityHint("Fills payee, category and account")
+                                        .frame(minHeight: 36)
+                                        .contentShape(Rectangle())
                                     }
+                                    .buttonStyle(.plain)
                                 }
                             }
-                        }
-                    }
-                    Section {
-                        TextField("Payee", text: $model.payee, prompt: Text("Who was paid"))
-                            .onChange(of: model.payee) { _, _ in
-                                model.prefillCategory()
-                            }
-
-                        if !payeeSuggestions.isEmpty {
-                            ForEach(payeeSuggestions) { suggestion in
-                                Button {
-                                    model.selectSuggestedPayee(suggestion.name)
-                                } label: {
-                                    HStack {
-                                        Text(suggestion.name)
-                                        Spacer()
-                                        if let defaultCategory = suggestion.defaultCategory {
-                                            Text(defaultCategory.name)
-                                                .font(.footnote)
-                                                .foregroundStyle(.secondary)
+                            if model.payee.isEmpty && !model.frequentPayees.isEmpty {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 8) {
+                                        ForEach(model.frequentPayees) { suggestion in
+                                            Button(suggestion.payee.name) {
+                                                model.selectFrequentPayee(suggestion)
+                                                isAmountFocused = true
+                                            }
+                                            .buttonStyle(.bordered)
+                                            .buttonBorderShape(.capsule)
+                                            .accessibilityHint("Fills payee, category and account")
                                         }
                                     }
                                 }
-                                .buttonStyle(.plain)
+                                .accessibilityLabel("Frequent payees")
                             }
                         }
-
-                        Picker("Category", selection: Binding(get: { model.categoryID }, set: { model.categoryID = $0; model.noteManualCategory() })) {
-                            Text("Select").tag(Optional<LedgerCategoryID>.none)
-                            ForEach(model.categories) { category in
-                                Text(category.name).tag(Optional(category.id))
-                            }
-                        }
-
                     }
-                }
-                Section {
-                    Picker(model.kind == .transfer ? "From account" : "Account", selection: $model.accountID) {
-                        Text("Select").tag(Optional<Account.ID>.none)
-                        ForEach(model.accounts) { account in Text(account.name).tag(Optional(account.id)) }
+
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { metadataChips }
+                        VStack(alignment: .leading, spacing: 12) { metadataChips }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                     if model.kind == .transfer {
-                        Picker("To account", selection: $model.destinationAccountID) {
-                            Text("Select").tag(Optional<Account.ID>.none)
-                            ForEach(model.accounts.filter { $0.id != model.accountID }) { account in Text(account.name).tag(Optional(account.id)) }
+                        Menu {
+                            Picker("To account", selection: $model.destinationAccountID) {
+                                Text("Choose account").tag(Optional<Account.ID>.none)
+                                ForEach(model.accounts.filter { $0.id != model.accountID }) { account in
+                                    Text(account.name).tag(Optional(account.id))
+                                }
+                            }
+                        } label: {
+                            Label(model.accounts.first { $0.id == model.destinationAccountID }?.name ?? "To account", systemImage: "arrow.right")
                         }
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                        .accessibilityLabel("Destination account")
                     }
-                    DatePicker("Date", selection: $model.selectedDate, displayedComponents: .date)
-                    if model.editingEntryID != nil { TextField("Note", text: $model.draftNote) }
-                }
 
-                if let message = model.draftMessage ?? missingFieldMessage {
-                    Section {
+                    if model.editingEntryID != nil && !model.draftNote.isEmpty {
+                        TextField("Note", text: $model.draftNote, axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    if voice.isPreparing {
+                        ProgressView("Preparing microphone")
+                    } else if voice.isRecording {
+                        Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript)
+                            .foregroundStyle(.secondary)
+                    } else if model.isInterpretingSpeech {
+                        ProgressView("Filling the card")
+                    }
+
+                    if let message = model.draftMessage {
                         Text(message)
                             .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel("Entry needs attention: \(message)")
                     }
+
+                    Button {
+                        if model.save() { dismiss() }
+                    } label: {
+                        Text("Save")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(voice.isRecording || voice.isPreparing || model.isInterpretingSpeech)
+                    .keyboardShortcut(.defaultAction)
                 }
+                .padding(24)
+                .frame(maxWidth: 560)
+                .background(.background, in: RoundedRectangle(cornerRadius: 28))
+                .padding()
+                .frame(maxWidth: .infinity)
             }
+            .background(Color.secondary.opacity(0.08))
             .disabled(model.isInterpretingSpeech)
             .navigationTitle(model.editingEntryID == nil ? "New transaction" : "Edit transaction")
             #if os(iOS)
@@ -309,22 +296,10 @@ struct AddEntrySheet: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        if model.save() {
-                            dismiss()
-                        }
-                    }
-                    .disabled(missingFieldMessage != nil || voice.isRecording || voice.isPreparing || model.isInterpretingSpeech)
+                    Button("Cancel") { dismiss() }
                 }
             }
-            .onAppear {
-                isAmountFocused = true
-            }
+            .onAppear { isAmountFocused = true }
             .onChange(of: voice.completedTranscript) { _, text in
                 guard let text else { return }
                 Task { await model.interpretSpeech(text) }
@@ -340,6 +315,81 @@ struct AddEntrySheet: View {
                 model.cancelSpeechInterpretation()
             }
         }
+        .frame(minWidth: 300)
+        #if os(macOS)
+        .frame(minHeight: 480)
+        #endif
+    }
+
+    @ViewBuilder private var metadataChips: some View {
+        if model.kind != .transfer {
+            Menu {
+                Picker("Category", selection: Binding(
+                    get: { model.categoryID },
+                    set: { model.categoryID = $0; model.noteManualCategory() }
+                )) {
+                    Text("Choose category").tag(Optional<LedgerCategoryID>.none)
+                    ForEach(model.categories) { category in Text(category.name).tag(Optional(category.id)) }
+                }
+            } label: {
+                Label(model.categories.first { $0.id == model.categoryID }?.name ?? "Category", systemImage: "tag")
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .accessibilityLabel("Category")
+            .accessibilityValue(model.categories.first { $0.id == model.categoryID }?.name ?? "Choose category")
+        }
+        Menu {
+            Picker(model.kind == .transfer ? "From account" : "Account", selection: $model.accountID) {
+                Text("Choose account").tag(Optional<Account.ID>.none)
+                ForEach(model.accounts) { account in Text(account.name).tag(Optional(account.id)) }
+            }
+        } label: {
+            Label(model.accounts.first { $0.id == model.accountID }?.name ?? "Account", systemImage: "creditcard")
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .accessibilityLabel(model.kind == .transfer ? "Source account" : "Account")
+        .accessibilityValue(model.accounts.first { $0.id == model.accountID }?.name ?? "Choose account")
+
+        Button { isChoosingDate = true } label: {
+            Label(model.selectedDate.formatted(.dateTime.month(.abbreviated).day()), systemImage: "calendar")
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .accessibilityLabel("Date")
+        .accessibilityValue(model.selectedDate.formatted(date: .complete, time: .omitted))
+        .popover(isPresented: $isChoosingDate) {
+            VStack {
+                DatePicker("Date", selection: $model.selectedDate, displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                Button("Done") { isChoosingDate = false }
+            }
+            .padding()
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private var microphoneButton: some View {
+        Button {
+            isAmountFocused = false
+            if voice.isRecording {
+                voice.finish()
+            } else {
+                Task {
+                    await voice.start(contextualStrings: Array(model.payees.map(\.name).prefix(100)))
+                }
+            }
+        } label: {
+            Image(systemName: voice.isRecording ? "stop.circle.fill" : "mic")
+                .font(.title3)
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.circle)
+        .disabled(voice.isPreparing || model.isInterpretingSpeech)
+        .accessibilityLabel(voice.isRecording ? "Stop listening" : "Fill from speech")
+        .accessibilityHint("Fills the card from on-device speech. Review the fields and tap Save.")
     }
 }
 

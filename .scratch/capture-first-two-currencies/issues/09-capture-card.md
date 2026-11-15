@@ -4,12 +4,14 @@
 
 **Blocked by:** 03 (Payees remember their category)
 
-**Status:** ready-for-agent
+**Status:** implemented; pending manual verification
 
-- [ ] The card layout matches the agreed shape: kind selector at the top, big amount, payee, chip row, Save.
-- [ ] Picking or typing a known payee fills category and the payee's last-used account.
-- [ ] A new payee gets the most recently used account.
-- [ ] Save reports a missing required field plainly and keeps the card open.
-- [ ] The in-app + and Mac Cmd-N open the card; editing an entry opens it filled.
-- [ ] Ledger exposes the payee's last-used account and most recently used account, tested through the Ledger public API.
+- [x] The card layout matches the agreed shape: kind selector at the top, big amount, payee, chip row, Save.
+- [x] Picking or typing a known payee fills category and the payee's last-used account.
+- [x] A new payee gets the most recently used account.
+- [x] Save reports a missing required field plainly and keeps the card open.
+- [x] The in-app + and Mac Cmd-N open the card; editing an entry opens it filled.
+- [x] Ledger exposes the payee's last-used account and most recently used account, tested through the Ledger public API.
 - [ ] Verified by hand on iPhone and Mac, including Dynamic Type and dark mode.
+
+Validation: Three Ledger public API tracer slices observed red then green for payee account memory (including income, aliases and trashed entries), recent-account fallback, and canonical suggestions matching aliases. Full package suite passed 84 Ledger-target and 6 Shell-target tests. Shared SwiftUI card compiles on macOS; iPhone/Mac visual, Dynamic Type, dark-mode and interaction checks remain pending. Account memory follows the existing frequent-payee ordering: newest reporting date, then recording order.
