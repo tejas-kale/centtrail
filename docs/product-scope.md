@@ -1,47 +1,47 @@
-# Expense tracker: design interview
+# Centtrail: product scope
 
-## Confirmed: audience and platforms
+Centtrail is a capture-first personal expense tracker for the owner, using an iPhone Air and an M-series MacBook Pro on iOS/macOS 26 or later. Both devices record and edit local data offline, then sync through the owner's iCloud account using SQLiteData and CloudKit ([ADR 0004](adr/0004-sync-first-with-sqlitedata.md)). Analysis happens on the laptop with a local model through a read-only MCP server.
 
-- V1 is for one person: the owner, using an iPhone Air and an M-series MacBook Pro on iOS/macOS 26 or later.
-- Data syncs through iCloud. Both devices support capture, edits, and reports offline using local data, then sync when available; show when changes are waiting to sync.
-- Evaluate Point-Free SQLiteData for local SQL and CloudKit sync first. Verify the planned relationships and offline/conflict behavior before adopting it; custom sync is a fallback if needed.
-- Conflicting edits use the most recent edit automatically, rather than asking the owner to resolve versions. The owner considers simultaneous edits and deletion/edit races unimportant and delegates those details: use the library's normal merge behavior without a bespoke conflict workflow.
-- EUR only. Transfers to the owner's Indian bank account are recorded in EUR; INR amounts, INR payments, savings tracking and custom charts are deferred.
-- Sync comes before the app redesign: spike SQLiteData + CloudKit on two devices for half a day, fall back to SwiftData if it fails. Start clean and re-import the CSV; no migration from 1.0 installs.
-- The v2 spec in `.scratch/centtrail-v2/spec.md` describes the screens. Refund rule: [ADR 0003](adr/0003-refund-is-income.md); sync choice: [ADR 0004](adr/0004-sync-first-with-sqlitedata.md).
+The current implementation contract is the [capture-first EUR/INR spec](../.scratch/capture-first-two-currencies/spec.md); the [design](design.md) describes its module boundaries. This scope supersedes the earlier EUR-only and on-device natural-language reporting decisions.
 
-## Confirmed: capture and classification
+## Capture
 
-- Capture is one + form: Expense | Income | Transfer, frequent-payee chips that fill payee, category and last account, and a mic that fills fields from speech (Apple's on-device model, else the keyword parser). Reachable from Home, a Siri/Shortcuts phrase, the Action button, a Control Center control and Cmd-N on the Mac.
-- User-triggered shortcuts are sufficient for v1. Bank-triggered capture is deferred until an integration is verified; it does not block v1.
-- Expenses and income capture amount, payee, category, account and date (default today). Transfers capture amount, from-account, to-account and date. Category is mandatory for expenses and income; categories and accounts are editable in Settings.
-- A category has many payees; each payee supplies one default category. Individual entries may override that default; an override at capture changes that entry only. Changing the payee default (Settings > Payees) also recategorizes historical purchases that used the old default; purchase-specific overrides remain separate. See [ADR 0002](adr/0002-retroactive-vendor-categories.md).
-- Merging two payees in Settings keeps the old name as an alias, so “AMZN MKTP” resolves to “Amazon.” Do not silently merge different businesses.
-- Payee covers both directions: an employer is a payee defaulting to Salary.
-- Short-form capture remains usable when the on-device model is unavailable. The owner will provide an expense snapshot later to establish the category list.
+- One card on iPhone and Mac: Expense · Income · Transfer at the top, a large amount, payee, prefilled category/account/date chips, frequent-payee chips, suggestions matching names and aliases, and one Save button. Editing uses the same card. Save identifies missing required fields and keeps the card open.
+- In-app + and Mac Cmd-N open the card for typing. The Action button and Lock Screen / Control Center control open it already listening, including from a cold start.
+- A mic opens an overlay with a live transcript; it closes when speech ends or the owner taps outside, leaving the card open. On-device parsing extracts only amount, payee and date, including relative dates. Fields not mentioned retain their values. Apple's on-device model has a keyword-parser fallback.
+- The date defaults to today. A known payee fills its category and last-used account; otherwise the account defaults to the most recently used account.
+- A Siri phrase such as “Centtrail 12.50 Lidl” parses and saves without opening the app. A complete draft saves fully classified; an unresolved category saves to the review inbox. Siri confirms amount, currency, payee and category or “to review.” An unparseable amount saves nothing.
 
-## Confirmed: financial semantics
+## Classification and review
 
-- Record income, expenses and transfers, each naming an account, without account balances. Exclude transfers from spending. There are no credit-card repayments.
-- A refund is income. It does not reduce spending and is not linked to the original purchase.
-- The owner chooses the reporting date. Keep it editable during entry and editing, and let CSV import map the chosen date column rather than mandate purchase date or bank posting date.
-- V1 must import existing transaction history from CSV. Skip definite repeats and ask the owner to resolve uncertain duplicate matches; identical date/payee/amount alone does not prove a duplicate.
-- Deleted transactions remain in recoverable trash for 30 days, synced across devices.
+- An expense or income saved for a payee without a default category establishes its first default. Choosing a different category when a default exists changes that entry only. Changing the default in Settings recategorises inherited history while preserving explicit overrides ([ADR 0002](adr/0002-retroactive-vendor-categories.md)).
+- CSV import applies new payees' category defaults directly. Existing outstanding proposals are applied by migration; there is no proposal-acceptance step. Merging payees retains names as aliases rather than silently merging different businesses.
+- Entries awaiting classification use the reserved Uncategorised category and count in spending. It never becomes a payee default and is excluded from payee suggestions and budgets.
+- Home shows “N to review” only when needed. The inbox lists entries newest first and opens the capture card for correction. Correcting the category clears review status and establishes a missing payee default.
 
-## Confirmed: reporting
+## Money, currencies and migration
 
-- Natural-language reporting covers totals, monthly/category breakdowns, changes between periods, and transaction search by payee, amount, or individual purchase. Examples include total monthly spending and monthly spending on utilities, restaurants, software, and groceries.
-- The on-device model selects operations and parameters; the app validates them and builds SQL. This replaces the initial model-written SQL proposal; see [ADR 0001](adr/0001-app-builds-reporting-sql.md).
-- Evaluate Apple's built-in Foundation Models model first for capture parsing and report-operation selection; adoption depends on measured accuracy. Fine-tuning or another model remains a fallback, not a committed implementation.
-- A typical natural-language report taking 5–7 seconds on the iPhone is acceptable. This is a target to evaluate, not measured performance.
-- Trends and comparisons default to charts with a table toggle; transaction searches show a list. Preset charts remain usable when the on-device model is unavailable.
-- Default comparison for “this month versus last month” uses matching elapsed days: on April 10, compare April 1–10 with March 1–10. When the previous month is shorter, use the available dates and visibly label unequal lengths: March 1–31 versus February 1–28 in a non-leap year. Explicit date ranges take precedence.
-- If a query omits its period, use the current calendar month and visibly show the date range used.
-- If a query ambiguously matches payees or categories, ask a short clarification before executing it.
+- Every account has exactly one currency, EUR or INR. Entries use their account's currency and exact minor units; amounts show € or ₹. There is no conversion or combined EUR/INR total ([ADR 0005](adr/0005-account-currencies-and-transfer-amounts.md)).
+- Transfers name source and destination accounts. Cross-currency transfers require both sent and received amounts; same-currency transfers ask for one and store equal amounts. Transfers are instant and never count as spending.
+- The existing ledger migrates in place: accounts become EUR, amounts stay unchanged, and historical transfers retain only their sent amount without review flags. A one-time migration allowance lets the owner mark the India account INR. Otherwise an account with entries cannot change currency.
+- Refunds are ordinary income and do not reduce spending ([ADR 0003](adr/0003-refund-is-income.md)). Transfers, trashed entries and non-spending categories such as savings do not contribute to spending.
+- The owner selects the reporting date; CSV import maps it explicitly. Repeat imports skip definite duplicates and present uncertain matches for review. Imported amounts follow the target account's currency.
+- Deleted entries remain in synced, recoverable trash for 30 days. Categories, payees and accounts are editable in Settings. There are no account balances or credit-card repayments.
 
-## Deferred inputs and validation
+## Home and budgets
 
-- The owner's snapshot will establish the category list; the CSV sample will establish actual column mappings and available duplicate identifiers.
-- The [consolidated design](design.md) proposes entry points, operation structure, import validation, and evaluation criteria for final review.
-- Apple's model and SQLiteData remain evaluation candidates. Their behavior and performance have not been tested on target devices.
-- Rare conflict details are delegated implementation choices, not open product questions.
+Home shows spending from the first day of this calendar month through today, with separate EUR and INR totals and recent entries. A currency with no spending is hidden. There is no previous-month comparison.
+
+Any spending category may have one optional fixed monthly budget, with amount and currency set, changed or removed in Settings. Budgets sync across devices, reset each calendar month and have no rollover. Home shows a small gauge only for budgeted categories, counting spending in that budget's currency: amber at 80%, red at 100%.
+
+## Local laptop analysis
+
+The Ask tab and on-device report interpretation are removed ([ADR 0006](adr/0006-local-read-only-analysis.md)). The on-device Interpreter remains only for capture. A local 9B–27B model can analyse the ledger through any MCP-capable client without sending financial data to an online model.
+
+The client launches `centtrail-mcp` over stdio on demand. It opens the Mac app's synced ledger read-only, even while the app is closed; freshness depends on the last Mac sync. It supports a path override, explains the schema through `describe_schema`, and accepts one read-only SQL statement through `query`, with capped results and an explicit truncation flag. SQLite enforces read-only access. Spending, transfer-rate and current-month budget views expose minor units, decimal amounts and currency codes. macOS may prompt the client for container access.
+
+## Validation and boundaries
+
+New behaviour is tested through Ledger's public API, using in-memory ledgers and temporary on-disk ledgers for read-only analysis. Migration uses a pre-migration ledger fixture. Capture, voice, system entry points, Siri and MCP client integration require manual verification on the target devices; two-device sync must also be verified.
+
+Out of scope: currencies beyond EUR and INR, exchange-rate feeds or conversion, account balances, savings tracking, custom charts, budget rollover or non-monthly budgets, write tools for MCP, on-phone reporting beyond Home, automatic bank-triggered capture, and backfilling historical received amounts.
