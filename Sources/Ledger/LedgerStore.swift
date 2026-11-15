@@ -53,6 +53,8 @@ struct EntryRecord: Identifiable, Sendable {
     var note: String?
     @Column("trashed_on")
     var trashedOn: String?
+    @Column("needs_review")
+    var needsReview: Bool = false
 }
 
 @Table("counterparty_alias")
@@ -270,6 +272,11 @@ final class SQLiteConnection {
                 LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
                 WHERE entry.kind = 'expense' AND entry.trashed_on IS NULL
                     AND category.counts_as_spending = 1;
+                """)
+        }
+        migrator.registerMigration("v4_review_inbox") { db in
+            try db.execute(sql: """
+                ALTER TABLE entry ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0;
                 """)
         }
         try migrator.migrate(database)

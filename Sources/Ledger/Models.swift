@@ -181,6 +181,7 @@ public struct Transaction: Hashable, Sendable, Identifiable {
     public let destinationAccount: Account?
     public let categoryProvenance: CategoryProvenance
     public let note: String?
+    public let needsReview: Bool
 
     public struct ID: Hashable, Sendable {
         public let rawValue: UUID
@@ -200,7 +201,8 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         account: Account,
         destinationAccount: Account? = nil,
         categoryProvenance: CategoryProvenance = .inherited,
-        note: String? = nil
+        note: String? = nil,
+        needsReview: Bool = false
     ) {
         self.id = id
         self.amount = amount
@@ -212,6 +214,7 @@ public struct Transaction: Hashable, Sendable, Identifiable {
         self.destinationAccount = destinationAccount
         self.categoryProvenance = categoryProvenance
         self.note = note
+        self.needsReview = needsReview
     }
 }
 
@@ -396,10 +399,17 @@ public struct MonthSummary: Hashable, Sendable {
     public let currentMonthRange: DateRange
     public let spendingCents: Int
     public let recentEntries: [Transaction]
+    public let reviewCount: Int
 
-    public init(currentMonthRange: DateRange, spendingCents: Int, recentEntries: [Transaction]) {
+    public init(
+        currentMonthRange: DateRange,
+        spendingCents: Int,
+        recentEntries: [Transaction],
+        reviewCount: Int = 0
+    ) {
         self.currentMonthRange = currentMonthRange
         self.spendingCents = spendingCents
         self.recentEntries = recentEntries
+        self.reviewCount = reviewCount
     }
 }

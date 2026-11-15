@@ -132,7 +132,8 @@ public final class Ledger {
                 accountID: accountID,
                 destinationAccountID: nil,
                 provenance: provenance,
-                note: draft.note
+                note: draft.note,
+                needsReview: category.id.rawValue == OwnerCategories.uncategorisedID
             )
             return try requireTransaction(id: entryID)
         }
@@ -168,17 +169,21 @@ public final class Ledger {
         named name: String,
         defaultCategory: Category.ID
     ) throws -> UUID {
+        let canSetDefault = defaultCategory.rawValue != OwnerCategories.uncategorisedID
         if let resolved = try resolvePayeeID(named: name) {
-            try connection.execute(
-                "UPDATE counterparty SET default_category_id = ? WHERE id = ? AND default_category_id IS NULL",
-                bindings: [.text(stored(defaultCategory.rawValue)), .text(stored(resolved))]
-            )
+            if canSetDefault {
+                try connection.execute(
+                    "UPDATE counterparty SET default_category_id = ? WHERE id = ? AND default_category_id IS NULL",
+                    bindings: [.text(stored(defaultCategory.rawValue)), .text(stored(resolved))]
+                )
+            }
             return resolved
         }
         let id = UUID()
+        let defaultBinding: SQLiteValue = canSetDefault ? .text(stored(defaultCategory.rawValue)) : .null
         try connection.execute(
             "INSERT INTO counterparty (id, name, default_category_id) VALUES (?, ?, ?)",
-            bindings: [.text(stored(id)), .text(name), .text(stored(defaultCategory.rawValue))]
+            bindings: [.text(stored(id)), .text(name), defaultBinding]
         )
         return id
     }
@@ -229,7 +234,10 @@ public final class Ledger {
     }
 
     public func categories() throws -> [Category] {
-        let rows = try connection.query("SELECT id, name, counts_as_spending FROM effective_category WHERE is_removed = 0 ORDER BY rowid")
+        let rows = try connection.query(
+            "SELECT id, name, counts_as_spending FROM effective_category WHERE is_removed = 0 AND id != ? ORDER BY rowid",
+            bindings: [.text(stored(OwnerCategories.uncategorisedID))]
+        )
         return try rows.map { row in
             guard row.count == 3,
                   let idText = row[0].text,
@@ -243,6 +251,10 @@ public final class Ledger {
         }
     }
 
+    public func uncategorisedCategory() throws -> Category {
+        try category(id: Category.ID(rawValue: OwnerCategories.uncategorisedID))
+    }
+
     private func seedCategories() throws {
         try connection.inTransaction {
             for sourceName in OwnerCategories.sourceNames {
@@ -254,6 +266,10 @@ public final class Ledger {
                     bindings: [.text(stored(id)), .text(name), .integer(countsAsSpending)]
                 )
             }
+            try connection.execute(
+                "INSERT OR IGNORE INTO category (id, name, counts_as_spending) VALUES (?, ?, 1)",
+                bindings: [.text(stored(OwnerCategories.uncategorisedID)), .text(OwnerCategories.uncategorisedName)]
+            )
         }
     }
 }

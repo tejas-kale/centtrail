@@ -148,7 +148,8 @@ extension Ledger {
         return MonthSummary(
             currentMonthRange: range,
             spendingCents: try sum(query: ReportQuery(measure: .spending), range: range),
-            recentEntries: Array(try transactions().prefix(5))
+            recentEntries: Array(try transactions().prefix(5)),
+            reviewCount: try reviewInboxCount()
         )
     }
 
