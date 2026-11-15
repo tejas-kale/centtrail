@@ -3,92 +3,6 @@ import FoundationModels
 import Ledger
 import struct Ledger.Category
 
-@Generable(description: "A read-only financial report query or unsupported refusal.")
-public struct GeneratedReportIntent: Sendable, Equatable {
-    @Generable
-    public enum OperationKind: String, Sendable, Equatable {
-        case total
-        case breakdown
-        case comparison
-        case search
-        case unsupported
-    }
-
-    @Generable
-    public enum MeasureKind: String, Sendable, Equatable {
-        case spending
-        case income
-    }
-
-    @Generable
-    public enum GroupingKind: String, Sendable, Equatable {
-        case category
-        case month
-        case monthAndCategory
-    }
-
-    @Generable
-    public enum AmountComparisonKind: String, Sendable, Equatable {
-        case greaterThan
-        case lessThan
-        case equal
-    }
-
-    @Guide(description: "The report operation kind, or unsupported for mutations or out-of-scope questions.")
-    public var operation: OperationKind
-
-    @Guide(description: "Whether the question asks about spending or income.")
-    public var measure: MeasureKind
-
-    @Guide(description: "Start date in YYYY-MM-DD format if a period is specified, otherwise nil.")
-    public var startDate: String?
-
-    @Guide(description: "End date in YYYY-MM-DD format if a period is specified, otherwise nil.")
-    public var endDate: String?
-
-    @Guide(description: "Exact category name from the provided categories list, or nil.")
-    public var categoryName: String?
-
-    @Guide(description: "Exact payee or alias name from the provided payees/aliases list, or nil.")
-    public var payeeName: String?
-
-    @Guide(description: "Grouping for breakdown operations: category, month, or monthAndCategory.")
-    public var grouping: GroupingKind?
-
-    @Guide(description: "Amount filter operator for search operations: greaterThan, lessThan, or equal.")
-    public var amountComparison: AmountComparisonKind?
-
-    @Guide(description: "Amount threshold in euros (e.g. 50.0 or 12.50) for search operations, or nil.")
-    public var amountEuros: Double?
-
-    @Guide(description: "Plain explanation when operation is unsupported.")
-    public var unsupportedReason: String?
-
-    public init(
-        operation: OperationKind,
-        measure: MeasureKind,
-        startDate: String? = nil,
-        endDate: String? = nil,
-        categoryName: String? = nil,
-        payeeName: String? = nil,
-        grouping: GroupingKind? = nil,
-        amountComparison: AmountComparisonKind? = nil,
-        amountEuros: Double? = nil,
-        unsupportedReason: String? = nil
-    ) {
-        self.operation = operation
-        self.measure = measure
-        self.startDate = startDate
-        self.endDate = endDate
-        self.categoryName = categoryName
-        self.payeeName = payeeName
-        self.grouping = grouping
-        self.amountComparison = amountComparison
-        self.amountEuros = amountEuros
-        self.unsupportedReason = unsupportedReason
-    }
-}
-
 @Generable(description: "Fields extracted from a natural-language expense or income entry.")
 public struct GeneratedCaptureDraft: Sendable, Equatable {
     @Generable
@@ -141,22 +55,18 @@ public struct GeneratedCaptureDraft: Sendable, Equatable {
 /// falling back to `KeywordLanguageModelBackend` when the system reports the model unavailable.
 public struct AppleFoundationModelBackend: LanguageModelBackend {
     public typealias AvailabilityProvider = @Sendable () -> ModelUnavailableReason?
-    public typealias ReportGenerator = @Sendable (String, InterpretationContext) async throws -> GeneratedReportIntent
     public typealias CaptureGenerator = @Sendable (String, InterpretationContext) async throws -> GeneratedCaptureDraft
 
     private let availabilityProvider: AvailabilityProvider
-    private let reportGenerator: ReportGenerator?
     private let captureGenerator: CaptureGenerator?
 
     public init(
         availabilityProvider: @escaping AvailabilityProvider = {
             Self.mapAvailability(SystemLanguageModel.default.availability)
         },
-        reportGenerator: ReportGenerator? = nil,
         captureGenerator: CaptureGenerator? = nil
     ) {
         self.availabilityProvider = availabilityProvider
-        self.reportGenerator = reportGenerator
         self.captureGenerator = captureGenerator
     }
 
@@ -177,52 +87,6 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
         case .unavailable:
             return .modelNotReady
         }
-    }
-
-    public func interpretReport(
-        _ text: String,
-        context: InterpretationContext,
-        resolvedName: String?
-    ) throws -> ReportInterpretation {
-        if let unavailable = modelUnavailableReason {
-            return try KeywordLanguageModelBackend(modelUnavailableReason: unavailable)
-                .interpretReport(text, context: context, resolvedName: resolvedName)
-        }
-        return try runBlocking {
-            try await interpretReportAsync(text, context: context, resolvedName: resolvedName)
-        }
-    }
-
-    public func interpretReportAsync(
-        _ text: String,
-        context: InterpretationContext,
-        resolvedName: String?
-    ) async throws -> ReportInterpretation {
-        if let unavailable = modelUnavailableReason {
-            return try KeywordLanguageModelBackend(modelUnavailableReason: unavailable)
-                .interpretReport(text, context: context, resolvedName: resolvedName)
-        }
-
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return .unsupported(Interpreter.supportedExplanation)
-        }
-
-        if InterpreterQueryHelpers.containsMutationVerb(in: trimmed) {
-            return .unsupported("Ask is read-only and cannot change your data. \(Interpreter.supportedExplanation)")
-        }
-
-        let intent: GeneratedReportIntent
-        if let reportGenerator {
-            intent = try await reportGenerator(trimmed, context)
-        } else {
-            let prompt = Self.reportPrompt(question: trimmed, context: context, resolvedName: resolvedName)
-            let session = LanguageModelSession(instructions: Self.reportInstructions)
-            let response = try await session.respond(to: prompt, generating: GeneratedReportIntent.self)
-            intent = response.content
-        }
-
-        return validateReportIntent(intent, question: trimmed, context: context, resolvedName: resolvedName)
     }
 
     public func interpretCapture(_ text: String, context: InterpretationContext) throws -> EntryDraft {
@@ -260,158 +124,6 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
     }
 
     // MARK: - Validation
-
-    func validateReportIntent(
-        _ intent: GeneratedReportIntent,
-        question: String,
-        context: InterpretationContext,
-        resolvedName: String?
-    ) -> ReportInterpretation {
-        if intent.operation == .unsupported {
-            let reason = intent.unsupportedReason?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let reason, !reason.isEmpty {
-                return .unsupported(reason)
-            }
-            return .unsupported(Interpreter.supportedExplanation)
-        }
-
-        let lowerQuestion = question.lowercased()
-        if (lowerQuestion.contains("vs") || lowerQuestion.contains("versus") || lowerQuestion.contains("compared")),
-           hasUnsupportedComparisonPeriod(question) {
-            return .unsupported(unsupportedComparisonExplanation)
-        }
-
-        // A period phrase in the question ("this year", "in March") wins over the model's dates,
-        // which are unreliable. Otherwise the model's dates must be both nil (current month
-        // default) or valid YYYY-MM-DD with start.iso8601 <= end.iso8601.
-        let range: DateRange?
-        switch (trimmedNonEmpty(intent.startDate), trimmedNonEmpty(intent.endDate)) {
-        case _ where intent.operation != .comparison && QuestionPeriod.range(in: question, today: context.today) != nil:
-            range = QuestionPeriod.range(in: question, today: context.today)
-        case (nil, nil):
-            range = nil
-        case (let startStr?, let endStr?):
-            guard let start = ReportingDate(iso8601: startStr),
-                  let end = ReportingDate(iso8601: endStr),
-                  start.iso8601 <= end.iso8601 else {
-                return .unsupported("I couldn't understand that date range. Try YYYY-MM-DD or a month like \"last month\".")
-            }
-            range = DateRange(start: start, end: end)
-        case (let startStr?, nil):
-            // "since March": an open end runs to today.
-            guard let start = ReportingDate(iso8601: startStr), start.iso8601 <= context.today.iso8601 else {
-                return .unsupported("I couldn't understand that date range. Try a month like \"last month\" or \"this year\".")
-            }
-            range = DateRange(start: start, end: context.today)
-        default:
-            return .unsupported("I couldn't understand that date range. Please specify both a start and end date or omit the period.")
-        }
-
-        // Resolve category & payee names, checking for ambiguity unless resolvedName is already chosen.
-        let resolution = resolveNames(
-            categoryName: trimmedNonEmpty(intent.categoryName),
-            payeeName: trimmedNonEmpty(intent.payeeName),
-            question: question,
-            context: context,
-            resolvedName: resolvedName
-        )
-        let categoryID: Category.ID?
-        let payeeName: String?
-        switch resolution {
-        case .resolved(let resolvedCategoryID, let resolvedPayeeName):
-            categoryID = resolvedCategoryID
-            payeeName = resolvedPayeeName
-        case .clarification(let candidates):
-            return .clarification(candidates)
-        case .invalid(let explanation):
-            return .unsupported(explanation)
-        }
-
-        let measure: Measure = intent.measure == .income ? .income : .spending
-
-        // "each month" / "by category" in the question means a breakdown, whatever the model chose.
-        let questionGrouping = QuestionPeriod.grouping(in: question)
-        var operation = intent.operation
-        switch (operation, questionGrouping) {
-        case (.total, _?), (.search, .month?), (.search, .monthAndCategory?):
-            operation = .breakdown
-        default:
-            break
-        }
-
-        switch operation {
-        case .total:
-            return .operation(.total(ReportQuery(
-                measure: measure,
-                range: range,
-                categoryID: categoryID,
-                payeeName: payeeName
-            )))
-
-        case .breakdown:
-            let grouping: Grouping
-            switch (questionGrouping, intent.grouping) {
-            case (let detected?, _):
-                grouping = detected
-            case (nil, .month):
-                grouping = .month
-            case (nil, .monthAndCategory):
-                grouping = .monthAndCategory
-            case (nil, .category), (nil, nil):
-                grouping = .category
-            }
-            return .operation(.breakdown(ReportQuery(
-                measure: measure,
-                range: range,
-                categoryID: categoryID,
-                payeeName: payeeName,
-                grouping: grouping
-            )))
-
-        case .comparison:
-            guard range == nil, !hasUnsupportedComparisonPeriod(question) else {
-                return .unsupported(unsupportedComparisonExplanation)
-            }
-            return .operation(.comparison(
-                measure: measure,
-                categoryID: categoryID,
-                payeeName: payeeName
-            ))
-
-        case .search:
-            let amountCondition: AmountCondition?
-            if let comparison = intent.amountComparison {
-                guard let euros = intent.amountEuros, let cents = Cents(roundedEuros: euros) else {
-                    return .unsupported("I couldn't understand the amount filter in that question.")
-                }
-                switch comparison {
-                case .greaterThan:
-                    amountCondition = .greaterThan(cents)
-                case .lessThan:
-                    amountCondition = .lessThan(cents)
-                case .equal:
-                    amountCondition = .equal(cents)
-                }
-            } else if let euros = intent.amountEuros {
-                guard let cents = Cents(roundedEuros: euros) else {
-                    return .unsupported("I couldn't understand the amount filter in that question.")
-                }
-                amountCondition = .equal(cents)
-            } else {
-                amountCondition = nil
-            }
-            return .operation(.search(ReportQuery(
-                measure: measure,
-                range: range,
-                categoryID: categoryID,
-                payeeName: payeeName,
-                amount: amountCondition
-            )))
-
-        case .unsupported:
-            return .unsupported(Interpreter.supportedExplanation)
-        }
-    }
 
     func validateCaptureDraft(
         _ generated: GeneratedCaptureDraft,
@@ -451,94 +163,6 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
         )
     }
 
-    private enum NameResolution {
-        case resolved(categoryID: Category.ID?, payeeName: String?)
-        case clarification([String])
-        case invalid(String)
-    }
-
-    private func resolveNames(
-        categoryName: String?,
-        payeeName: String?,
-        question: String,
-        context: InterpretationContext,
-        resolvedName: String?
-    ) -> NameResolution {
-        if let resolvedName {
-            let target = resolvedName.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let category = context.categories.first(where: { $0.name.caseInsensitiveCompare(target) == .orderedSame }) {
-                return .resolved(categoryID: category.id, payeeName: nil)
-            }
-            if let payee = context.payees.first(where: { $0.name.caseInsensitiveCompare(target) == .orderedSame }) {
-                return .resolved(categoryID: nil, payeeName: payee.name)
-            }
-            if let alias = context.aliasNames.first(where: { $0.caseInsensitiveCompare(target) == .orderedSame }) {
-                return .resolved(categoryID: nil, payeeName: alias)
-            }
-            return .invalid("I couldn't find \"\(target)\" in your categories or payees.")
-        }
-
-        // Check if the question itself contains an ambiguous prefix/token matching multiple known names
-        // (e.g., "Amazon" when both "Amazon" and "Amazon Fresh" exist and the user didn't say "Amazon Fresh").
-        let allKnownNames = context.categories.map(\.name) + context.payees.map(\.name) + context.aliasNames
-        let prunedHits = InterpreterQueryHelpers.matchingKnownNames(
-            from: allKnownNames,
-            question: question,
-            nameOf: { $0 }
-        )
-        let uniquePruned = Array(Set(prunedHits)).sorted()
-        if uniquePruned.count > 1 {
-            return .clarification(uniquePruned)
-        }
-
-        var resolvedCategoryID: Category.ID?
-        if let categoryName {
-            if let match = context.categories.first(where: { $0.name.caseInsensitiveCompare(categoryName) == .orderedSame }) {
-                resolvedCategoryID = match.id
-            } else {
-                let candidates = matchingCandidates(for: categoryName, in: allKnownNames)
-                if candidates.count == 1,
-                   let match = context.categories.first(where: { $0.name.caseInsensitiveCompare(candidates[0]) == .orderedSame }) {
-                    resolvedCategoryID = match.id
-                } else if candidates.count > 1 {
-                    return .clarification(candidates)
-                } else {
-                    return .invalid("I couldn't find a category named \"\(categoryName)\".")
-                }
-            }
-        }
-
-        var resolvedPayeeName: String?
-        if let payeeName {
-            if let match = context.payees.first(where: { $0.name.caseInsensitiveCompare(payeeName) == .orderedSame }) {
-                resolvedPayeeName = match.name
-            } else if let alias = context.aliasNames.first(where: { $0.caseInsensitiveCompare(payeeName) == .orderedSame }) {
-                resolvedPayeeName = alias
-            } else {
-                let candidates = matchingCandidates(for: payeeName, in: allKnownNames)
-                if candidates.count == 1,
-                   let match = (context.payees.map(\.name) + context.aliasNames).first(where: { $0.caseInsensitiveCompare(candidates[0]) == .orderedSame }) {
-                    resolvedPayeeName = match
-                } else if candidates.count > 1 {
-                    return .clarification(candidates)
-                } else {
-                    return .invalid("I couldn't find a payee named \"\(payeeName)\".")
-                }
-            }
-        }
-
-        return .resolved(categoryID: resolvedCategoryID, payeeName: resolvedPayeeName)
-    }
-
-    private func matchingCandidates(for query: String, in names: [String]) -> [String] {
-        let lower = query.lowercased()
-        let matches = names.filter { name in
-            let candidate = name.lowercased()
-            return candidate.contains(lower) || lower.contains(candidate)
-        }
-        return Array(Set(matches)).sorted()
-    }
-
     private func trimmedNonEmpty(_ value: String?) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
             return nil
@@ -566,36 +190,6 @@ public struct AppleFoundationModelBackend: LanguageModelBackend {
     }
 
     // MARK: - Prompts
-
-    private static let reportInstructions = """
-    You translate personal finance questions into read-only report queries.
-    Never invent numbers or execute mutations (add, delete, edit, merge, import).
-    For mutation requests or questions outside spending/income totals, breakdowns, comparisons, or transaction searches, return operation = unsupported.
-    If no date period is mentioned, leave startDate and endDate nil (which defaults to the current calendar month).
-    "This year" runs from January 1 of the current year to today; "last year" is the whole previous calendar year.
-    Questions asking for amounts "each month", "per month" or "monthly" are a breakdown with grouping month.
-    Comparisons support this month against matching elapsed days of last month only. For that comparison leave dates nil; return unsupported for other comparison periods.
-    Only use categoryName from the provided categories list and payeeName from the provided payees/aliases list.
-    """
-
-    private static func reportPrompt(
-        question: String,
-        context: InterpretationContext,
-        resolvedName: String?
-    ) -> String {
-        let categories = context.categories.map(\.name).sorted().joined(separator: ", ")
-        let payees = (context.payees.map(\.name) + context.aliasNames).sorted().joined(separator: ", ")
-        var prompt = """
-        Today: \(context.today.iso8601)
-        Categories: \(categories.isEmpty ? "(none)" : categories)
-        Payees and aliases: \(payees.isEmpty ? "(none)" : payees)
-        Question: \(question)
-        """
-        if let resolvedName {
-            prompt += "\nThe user clarified the name as: \(resolvedName)"
-        }
-        return prompt
-    }
 
     private static let captureInstructions = """
     You extract structured fields from a short expense or income sentence.

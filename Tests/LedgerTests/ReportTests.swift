@@ -169,24 +169,6 @@ import Testing
     #expect(rows.map(\.cents) == [1000, 0, 2500])
 }
 
-@Test func requiredReportFixturesScoreTheOperationAndArguments() throws {
-    let ledger = try Ledger.openInMemory()
-    _ = try recordEntry(ledger, cents: 100, kind: .expense, payee: "Amazon", date: "2026-03-01", category: "Supermarket")
-    _ = try recordEntry(ledger, cents: 100, kind: .expense, payee: "Amazon Fresh", date: "2026-03-02", category: "Supermarket")
-    let today = try #require(ReportingDate(iso8601: "2026-04-10"))
-    let interpreter = Interpreter(ledger: ledger, today: today, modelUnavailableReason: .modelNotReady)
-    let restaurant = try namedCategory(ledger, "Restaurant")
-    let utilities = try namedCategory(ledger, "Utilities")
-    #expect(interpreter.score(try interpreter.interpretReport("how much did I spend this month?"), expected: .operation(.total(ReportQuery(measure: .spending)))).passed)
-    #expect(interpreter.score(try interpreter.interpretReport("spent on restaurants compared with last month"), expected: .operation(.comparison(measure: .spending, categoryID: restaurant.id, payeeName: nil))).passed)
-    #expect(interpreter.score(try interpreter.interpretReport("utilities over months"), expected: .operation(.breakdown(ReportQuery(measure: .spending, categoryID: utilities.id, grouping: .month)))).passed)
-    #expect(interpreter.score(try interpreter.interpretReport("monthly spending by category"), expected: .operation(.breakdown(ReportQuery(measure: .spending, grouping: .category)))).passed)
-    #expect(interpreter.score(try interpreter.interpretReport("find purchases over 50"), expected: .operation(.search(ReportQuery(measure: .spending, amount: .greaterThan(Cents(5000)))))).passed)
-    #expect(try interpreter.interpretReport("how much did I spend at Amazon") == .clarification(["Amazon", "Amazon Fresh"]))
-    guard case .unsupported = try interpreter.interpretReport("what is my net worth?") else { Issue.record("unsupported"); return }
-    #expect(interpreter.score(.operation(.total(ReportQuery(measure: .spending))), expected: .operation(.breakdown(ReportQuery(measure: .spending, grouping: .category)))).operationMatches == false)
-}
-
 @Test func typedAndDictatedCaptureFillTheSameDraft() throws {
     let ledger = try Ledger.openInMemory()
     _ = try recordEntry(ledger, cents: 100, kind: .expense, payee: "Middle Eats", date: "2026-01-01", category: "Restaurant")
