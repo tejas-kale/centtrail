@@ -45,10 +45,17 @@ public final class Ledger {
         try Ledger(path: file.path(percentEncoded: false), syncMode: sync)
     }
 
-    init(path: String?, syncMode: SyncMode) throws {
-        connection = try SQLiteConnection(path: path, syncMode: syncMode)
-        try seedCategories()
-        try seedAccounts()
+    /// Opens an existing ledger without migration, bootstrap writes or sync.
+    public static func openReadOnly(at file: URL) throws -> Ledger {
+        try Ledger(path: file.path(percentEncoded: false), syncMode: .disabled, readOnly: true)
+    }
+
+    init(path: String?, syncMode: SyncMode, readOnly: Bool = false) throws {
+        connection = try SQLiteConnection(path: path, syncMode: syncMode, readOnly: readOnly)
+        if !readOnly {
+            try seedCategories()
+            try seedAccounts()
+        }
     }
 
     /// Calls `onChange` after every committed change to the ledger, whether made

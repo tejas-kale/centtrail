@@ -89,15 +89,26 @@ private enum ActiveDatabase {
 final class SQLiteConnection {
     let database: any DatabaseWriter
     let syncEngine: SyncEngine?
+    let path: String?
 
-    init(path: String?, syncMode: Ledger.SyncMode) throws {
+    init(path: String?, syncMode: Ledger.SyncMode, readOnly: Bool = false) throws {
+        self.path = path
         var configuration = Configuration()
         configuration.foreignKeysEnabled = true
+        configuration.readonly = readOnly
+        if readOnly {
+            configuration.prepareDatabase { db in try db.execute(sql: "PRAGMA query_only = ON") }
+        }
 
         if let path {
             database = try DatabasePool(path: path, configuration: configuration)
         } else {
             database = try DatabaseQueue(configuration: configuration)
+        }
+
+        if readOnly {
+            syncEngine = nil
+            return
         }
 
         var migrator = DatabaseMigrator()
@@ -243,6 +254,22 @@ final class SQLiteConnection {
                 WHERE category_provenance = 'inherited'
                   AND counterparty_id IN (SELECT counterparty_id FROM proposed_payee_default);
                 DROP TABLE proposed_payee_default;
+                """)
+        }
+        migrator.registerMigration("capture_analysis_spending") { db in
+            try db.execute(sql: """
+                CREATE VIEW spending AS
+                SELECT entry.id, entry.reporting_date, entry.amount_cents,
+                    entry.amount_cents / 100.0 AS amount, 'EUR' AS currency,
+                    counterparty.name AS payee, category.name AS category,
+                    account.name AS account, entry.account_id, entry.category_id,
+                    entry.counterparty_id AS payee_id
+                FROM entry
+                JOIN effective_category AS category ON category.id = entry.category_id
+                JOIN effective_account AS account ON account.id = entry.account_id
+                LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
+                WHERE entry.kind = 'expense' AND entry.trashed_on IS NULL
+                    AND category.counts_as_spending = 1;
                 """)
         }
         try migrator.migrate(database)

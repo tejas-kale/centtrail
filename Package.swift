@@ -13,6 +13,7 @@ let package = Package(
         .library(name: "Interpreter", targets: ["Interpreter"]),
         .library(name: "CenttrailShell", targets: ["CenttrailShell"]),
         .executable(name: "Centtrail", targets: ["CenttrailMac"]),
+        .executable(name: "centtrail-mcp", targets: ["CenttrailMCP"]),
     ],
     dependencies: [
         .package(url: "https://github.com/pointfreeco/sqlite-data", from: "1.9.0"),
@@ -36,6 +37,7 @@ let package = Package(
             name: "CenttrailMac",
             dependencies: ["CenttrailShell"]
         ),
+        .executableTarget(name: "CenttrailMCP", dependencies: ["Ledger"]),
         .testTarget(
             name: "LedgerTests",
             dependencies: ["Ledger", "Interpreter", "CenttrailShell"],
