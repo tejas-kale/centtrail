@@ -12,4 +12,4 @@
 - [x] Ledger report calculations still used by Home remain and their tests pass.
 - [ ] The package builds for iOS and macOS with no unused Interpreter report types left.
 
-Validation: macOS `swift test --skip-update` passed, including voice capture and Ledger report calculations. iOS app compile is running separately; its final acceptance checkbox stays open until that succeeds.
+Validation: macOS `swift test --skip-update` passed, including voice capture and Ledger report calculations. iOS app compile was attempted but blocked in dependency macro targets by unresolved SwiftSyntax/SwiftCompilerPlugin modules before application compilation; its final acceptance checkbox stays open until an integration build succeeds. Log: `/private/tmp/centtrail-01-ios.log`.
