@@ -145,9 +145,32 @@ extension Ledger {
     public func monthSummary(on today: ReportingDate) throws -> MonthSummary {
         let start = ReportingDate(year: today.year, month: today.month, day: 1)!
         let range = DateRange(start: start, end: today)
+        let rows = try connection.query(
+            """
+            SELECT account.currency, SUM(entry.amount_cents)
+            FROM entry
+            JOIN effective_category AS entry_category ON entry_category.id = entry.category_id
+            JOIN effective_account AS account ON account.id = entry.account_id
+            WHERE entry.trashed_on IS NULL
+              AND entry.kind = 'expense'
+              AND entry_category.counts_as_spending = 1
+              AND entry.reporting_date >= ?
+              AND entry.reporting_date <= ?
+            GROUP BY account.currency
+            """,
+            bindings: [.text(range.start.iso8601), .text(range.end.iso8601)]
+        )
+        var totals: [Currency: Int] = [:]
+        for row in rows {
+            guard let currency = row[0].text.flatMap(Currency.init(rawValue:)),
+                  let total = row[1].integer,
+                  total > 0
+            else { continue }
+            totals[currency] = Int(total)
+        }
         return MonthSummary(
             currentMonthRange: range,
-            spendingCents: try sum(query: ReportQuery(measure: .spending), range: range),
+            spendingByCurrency: totals,
             recentEntries: Array(try transactions().prefix(5))
         )
     }

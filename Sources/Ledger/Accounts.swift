@@ -1,5 +1,17 @@
 import Foundation
 
+public enum Currency: String, Hashable, Sendable, CaseIterable {
+    case eur = "EUR"
+    case inr = "INR"
+
+    public var symbol: String {
+        switch self {
+        case .eur: "€"
+        case .inr: "₹"
+        }
+    }
+}
+
 public struct Account: Hashable, Sendable, Identifiable {
     public struct ID: Hashable, Sendable {
         public let rawValue: UUID
@@ -7,16 +19,24 @@ public struct Account: Hashable, Sendable, Identifiable {
     }
     public let id: ID
     public let name: String
-    public init(id: ID, name: String) { self.id = id; self.name = name }
+    public let currency: Currency
+    public init(id: ID, name: String, currency: Currency = .eur) {
+        self.id = id
+        self.name = name
+        self.currency = currency
+    }
 }
 
 extension Ledger {
     public func accounts() throws -> [Account] {
-        try connection.query("SELECT id, name FROM effective_account WHERE is_removed = 0 ORDER BY rowid").map { row in
-            guard let id = row[0].text.flatMap(UUID.init(uuidString:)), let name = row[1].text else {
+        try connection.query("SELECT id, name, currency FROM effective_account WHERE is_removed = 0 ORDER BY rowid").map { row in
+            guard let id = row[0].text.flatMap(UUID.init(uuidString:)),
+                  let name = row[1].text,
+                  let currency = row[2].text.flatMap(Currency.init(rawValue:))
+            else {
                 throw LedgerError(message: "The ledger returned an account it could not read.")
             }
-            return Account(id: Account.ID(rawValue: id), name: name)
+            return Account(id: Account.ID(rawValue: id), name: name, currency: currency)
         }
     }
 
@@ -28,20 +48,52 @@ extension Ledger {
     }
 
     @discardableResult
-    public func addAccount(name: String) throws -> Account {
+    public func addAccount(name: String, currency: Currency = .eur) throws -> Account {
         let name = try validatedAccountName(name)
-        let account = Account(id: Account.ID(rawValue: UUID()), name: name)
-        try connection.execute("INSERT INTO account (id, name) VALUES (?, ?)",
-            bindings: [.text(stored(account.id.rawValue)), .text(name)])
+        let account = Account(id: Account.ID(rawValue: UUID()), name: name, currency: currency)
+        try connection.execute("INSERT INTO account (id, name, currency) VALUES (?, ?, ?)",
+            bindings: [.text(stored(account.id.rawValue)), .text(name), .text(currency.rawValue)])
         return account
     }
 
     @discardableResult
     public func renameAccount(id: Account.ID, to name: String) throws -> Account {
-        _ = try account(id: id)
+        let current = try account(id: id)
         let name = try validatedAccountName(name, excluding: id)
         try renameReference(id.rawValue, to: name)
-        return Account(id: id, name: name)
+        return Account(id: id, name: name, currency: current.currency)
+    }
+
+    @discardableResult
+    public func setAccountCurrency(id: Account.ID, to currency: Currency) throws -> Account {
+        let current = try account(id: id)
+        if current.currency == currency { return current }
+        let count = try connection.query(
+            "SELECT COUNT(*) FROM entry WHERE account_id = ? OR destination_account_id = ?",
+            bindings: [.text(stored(id.rawValue)), .text(stored(id.rawValue))]
+        ).first?.first?.integer ?? 0
+        if count > 0 {
+            let allowed = try connection.query(
+                "SELECT can_migrate_currency FROM account WHERE id = ?",
+                bindings: [.text(stored(id.rawValue))]
+            ).first?.first?.integer ?? 0
+            guard allowed == 1 else {
+                throw LedgerError(message: "Cannot change \"\(current.name)\"'s currency because \(count) transactions use it.")
+            }
+            try connection.inTransaction {
+                try connection.execute(
+                    "UPDATE account SET currency = ? WHERE id = ?",
+                    bindings: [.text(currency.rawValue), .text(stored(id.rawValue))]
+                )
+                try connection.execute("UPDATE account SET can_migrate_currency = 0")
+            }
+            return Account(id: id, name: current.name, currency: currency)
+        }
+        try connection.execute(
+            "UPDATE account SET currency = ? WHERE id = ?",
+            bindings: [.text(currency.rawValue), .text(stored(id.rawValue))]
+        )
+        return Account(id: id, name: current.name, currency: currency)
     }
 
     public func removeAccount(id: Account.ID) throws {

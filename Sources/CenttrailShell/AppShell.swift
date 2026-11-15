@@ -31,9 +31,20 @@ struct HomeScreen: View {
                             Text(monthTitle(model.today))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
-                            Text(formatEuro(summary.spendingCents))
-                                .font(.largeTitle.bold())
-                                .monospacedDigit()
+                            let totals = Currency.allCases.compactMap { currency in
+                                summary.spendingByCurrency[currency].map { (currency: currency, amount: $0) }
+                            }
+                            if totals.isEmpty {
+                                Text(formatAmount(0, currency: .eur))
+                                    .font(.largeTitle.bold())
+                                    .monospacedDigit()
+                            } else {
+                                ForEach(totals, id: \.currency) { item in
+                                    Text(formatAmount(item.amount, currency: item.currency))
+                                        .font(.largeTitle.bold())
+                                        .monospacedDigit()
+                                }
+                            }
                         }
                         .padding(.vertical, 4)
                     }
@@ -87,7 +98,7 @@ struct AllTransactionsScreen: View {
             (tx.payee?.name.localizedCaseInsensitiveContains(query) ?? false)
                 || (tx.category?.name.localizedCaseInsensitiveContains(query) ?? false)
                 || (tx.note?.localizedCaseInsensitiveContains(query) ?? false)
-                || formatEuro(tx.amount.value).localizedCaseInsensitiveContains(query)
+                || formatAmount(tx.amount.value, currency: tx.account.currency).localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -157,6 +168,10 @@ struct AddEntrySheet: View {
     @State private var isChoosingDate = false
     @StateObject private var voice = VoiceCapture()
 
+    private var selectedAccountCurrency: Currency {
+        model.accounts.first { $0.id == model.accountID }?.currency ?? .eur
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -169,7 +184,7 @@ struct AddEntrySheet: View {
                     .pickerStyle(.segmented)
 
                     HStack(spacing: 8) {
-                        Text("€").foregroundStyle(.secondary)
+                        Text(selectedAccountCurrency.symbol).foregroundStyle(.secondary)
                         TextField("Amount", text: $model.amountText, prompt: Text("0.00"))
                             .focused($isAmountFocused)
                             .multilineTextAlignment(.center)
@@ -418,7 +433,7 @@ struct TransactionDetail: View {
 
             Section {
                 LabeledContent("Amount") {
-                    Text(formatEuro(transaction.amount.value))
+                    Text(formatAmount(transaction.amount.value, currency: transaction.account.currency))
                         .foregroundStyle(transaction.kind == .income ? .green : .primary)
                         .monospacedDigit()
                 }
@@ -728,7 +743,7 @@ struct TrashScreen: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text(formatEuro(entry.transaction.amount.value))
+                        Text(formatAmount(entry.transaction.amount.value, currency: entry.transaction.account.currency))
                             .monospacedDigit()
                         Button("Restore") {
                             do {

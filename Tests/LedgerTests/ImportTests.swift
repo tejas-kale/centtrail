@@ -44,7 +44,7 @@ import Testing
     guard case .needsCorrection(let unknown) = preview[0].state else { Issue.record("unknown"); return }
     #expect(unknown.contains("Unknown category Not A Category."))
     guard case .needsCorrection(let currency) = preview[1].state else { Issue.record("currency"); return }
-    #expect(currency.contains("Only EUR at rate 1.0 can be imported."))
+    #expect(currency.contains("Only EUR or INR at rate 1.0 can be imported."))
     #expect(preview[2].state == .ready)
     #expect(preview[3].state == .ready)
     #expect(preview[3].reportingDate == "2026-05-01")
@@ -234,4 +234,31 @@ import Testing
     try ledger.confirmAlias("LIDL BERLIN", of: payee.id)
     #expect(try ledger.defaultCategory(forPayeeName: "lidl berlin")?.name == "Supermarket")
     #expect(try ledger.proposedPayeeDefaults().isEmpty)
+}
+
+@Test func csvImportAssignsImportedRowsTheTargetAccountsCurrency() throws {
+    let ledger = try Ledger.openInMemory()
+    let india = try #require(try ledger.accounts().first { $0.name == "India" })
+    try ledger.setAccountCurrency(id: india.id, to: .inr)
+
+    let csv = """
+    Date,Amount,Source Currency,Target Currency,Exchange Rate,Payee,Category,Source Account,Notes
+    2026-11-01,-450.00,INR,INR,1.0,BigBasket,Supermarket,India,
+    2026-11-02,-120.00,INR,INR,1.0,Swiggy,Restaurant,INR Wallet,
+    2026-11-03,-10.00,INR,INR,1.0,REWE,Supermarket,N26,
+    """
+    let preview = try ledger.previewImport(csv)
+    #expect(preview[0].state == .ready)
+    #expect(preview[1].state == .ready)
+    guard case .needsCorrection = preview[2].state else {
+        Issue.record("Expected currency mismatch with N26 to need correction")
+        return
+    }
+
+    let result = try ledger.commitImport(csv)
+    #expect(result.importedCount == 2)
+    let entries = try ledger.transactions()
+    #expect(entries.allSatisfy { $0.account.currency == .inr })
+    let wallet = try #require(try ledger.accounts().first { $0.name == "INR Wallet" })
+    #expect(wallet.currency == .inr)
 }

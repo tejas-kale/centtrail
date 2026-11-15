@@ -394,12 +394,12 @@ public struct EntryDraft: Equatable, Sendable {
 /// Spending from the first of the current month through today, plus recent entries.
 public struct MonthSummary: Hashable, Sendable {
     public let currentMonthRange: DateRange
-    public let spendingCents: Int
+    public let spendingByCurrency: [Currency: Int]
     public let recentEntries: [Transaction]
 
-    public init(currentMonthRange: DateRange, spendingCents: Int, recentEntries: [Transaction]) {
+    public init(currentMonthRange: DateRange, spendingByCurrency: [Currency: Int], recentEntries: [Transaction]) {
         self.currentMonthRange = currentMonthRange
-        self.spendingCents = spendingCents
+        self.spendingByCurrency = spendingByCurrency
         self.recentEntries = recentEntries
     }
 }

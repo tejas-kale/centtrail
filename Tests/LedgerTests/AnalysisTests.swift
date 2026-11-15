@@ -86,3 +86,24 @@ private func withAnalysisLedger(_ body: (Ledger, Ledger) throws -> Void) throws 
     #expect(throws: (any Error).self) { _ = try Ledger.openReadOnly(at: file) }
     #expect(!FileManager.default.fileExists(atPath: file.path))
 }
+
+@Test func spendingViewExposesEachEntriesAccountCurrencyCode() throws {
+    try withAnalysisLedger { writer, reader in
+        let india = try #require(try writer.accounts().first { $0.name == "India" })
+        try writer.setAccountCurrency(id: india.id, to: .inr)
+        _ = try recordEntry(writer, cents: 1250, kind: .expense, payee: "Lidl", date: "2026-11-15", category: "Supermarket")
+        _ = try writer.record(EntryDraft(
+            amount: Cents(45000),
+            kind: .expense,
+            payee: "BigBasket",
+            reportingDate: ReportingDate(iso8601: "2026-11-15")!,
+            categoryID: try namedCategory(writer, "Supermarket").id,
+            accountID: india.id
+        ))
+        let rows = try reader.query(sql: "SELECT currency, amount_cents, amount FROM spending ORDER BY currency").rows
+        #expect(rows == [
+            [.text("EUR"), .integer(1250), .real(12.5)],
+            [.text("INR"), .integer(45000), .real(450.0)],
+        ])
+    }
+}

@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Ledger
 import Testing
 
@@ -55,4 +56,122 @@ import Testing
     #expect(throws: LedgerError.self) { try reopened.removeAccount(id: accounts[1].id) }
     #expect(throws: LedgerError.self) { try reopened.addAccount(name: " everyday ") }
     #expect(throws: LedgerError.self) { try reopened.addAccount(name: " ") }
+}
+
+@Test func accountsCarryCurrencyAndPersistAcrossReopening() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let ledger = try Ledger.open(at: url)
+    #expect(try ledger.accounts().allSatisfy { $0.currency == .eur })
+
+    let inrCash = try ledger.addAccount(name: "INR Cash", currency: .inr)
+    #expect(inrCash.currency == .inr)
+
+    let reopened = try Ledger.open(at: url)
+    let fetched = try #require(try reopened.accounts().first { $0.id == inrCash.id })
+    #expect(fetched.currency == .inr)
+}
+
+@Test func changingAccountCurrencySucceedsWhenEmptyAndIsRefusedOnceItHoldsEntries() throws {
+    let ledger = try Ledger.openInMemory()
+    let accounts = try ledger.accounts()
+    let india = try #require(accounts.first { $0.name == "India" })
+    let n26 = try #require(accounts.first { $0.name == "N26" })
+
+    let updatedIndia = try ledger.setAccountCurrency(id: india.id, to: .inr)
+    #expect(updatedIndia.currency == .inr)
+    #expect(try ledger.accounts().first { $0.id == india.id }?.currency == .inr)
+
+    let date = try #require(ReportingDate(iso8601: "2026-11-14"))
+    _ = try ledger.record(EntryDraft(
+        amount: Cents(50000),
+        kind: .transfer,
+        reportingDate: date,
+        accountID: n26.id,
+        destinationAccountID: india.id
+    ))
+
+    // Both source and destination accounts now hold entries, so currency changes are refused.
+    #expect(throws: LedgerError.self) { try ledger.setAccountCurrency(id: n26.id, to: .inr) }
+    #expect(throws: LedgerError.self) { try ledger.setAccountCurrency(id: india.id, to: .eur) }
+    // Setting to the same currency is a no-op.
+    #expect(try ledger.setAccountCurrency(id: india.id, to: .inr).currency == .inr)
+}
+
+@Test func preMigrationLedgerSetsAllAccountsToEURAndAllowsMarkingIndiaINROnce() throws {
+    let file = try legacyCurrencyLedger()
+    let ledger = try Ledger.open(at: file)
+    let accounts = try ledger.accounts()
+    #expect(accounts.allSatisfy { $0.currency == .eur })
+
+    let transactions = try ledger.transactions()
+    #expect(transactions.map(\.amount.value).sorted() == [1250, 50000])
+
+    let india = try #require(accounts.first { $0.name == "India" })
+    let n26 = try #require(accounts.first { $0.name == "N26" })
+
+    // One-time post-migration allowance permits marking India as INR even though it holds entries.
+    let updatedIndia = try ledger.setAccountCurrency(id: india.id, to: .inr)
+    #expect(updatedIndia.currency == .inr)
+    #expect(try ledger.accounts().first { $0.id == india.id }?.currency == .inr)
+
+    // Allowance is consumed: further currency changes on accounts with entries are refused.
+    #expect(throws: LedgerError.self) { try ledger.setAccountCurrency(id: india.id, to: .eur) }
+    #expect(throws: LedgerError.self) { try ledger.setAccountCurrency(id: n26.id, to: .inr) }
+}
+
+private func legacyCurrencyLedger() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let file = directory.appendingPathComponent("ledger.sqlite")
+    do {
+        let ledger = try Ledger.open(at: file)
+        let accounts = try ledger.accounts()
+        let n26 = try #require(accounts.first { $0.name == "N26" })
+        let india = try #require(accounts.first { $0.name == "India" })
+        let date = try #require(ReportingDate(iso8601: "2026-11-14"))
+        _ = try ledger.record(EntryDraft(
+            amount: Cents(1250),
+            kind: .expense,
+            payee: "Lidl",
+            reportingDate: date,
+            categoryID: try namedCategory(ledger, "Supermarket").id,
+            accountID: n26.id
+        ))
+        _ = try ledger.record(EntryDraft(
+            amount: Cents(50000),
+            kind: .transfer,
+            reportingDate: date,
+            accountID: n26.id,
+            destinationAccountID: india.id
+        ))
+    }
+    let database = try DatabaseQueue(path: file.path)
+    try database.write { db in
+        try db.execute(sql: """
+            DROP VIEW IF EXISTS spending;
+            DROP VIEW IF EXISTS effective_account;
+            CREATE VIEW effective_account AS
+                SELECT account.rowid AS rowid, account.id,
+                    COALESCE(custom.name, account.name) AS name,
+                    COALESCE(custom.is_removed, 0) AS is_removed
+                FROM account LEFT JOIN reference_customization AS custom ON custom.id = account.id;
+            CREATE VIEW spending AS
+                SELECT entry.id, entry.reporting_date, entry.amount_cents,
+                    entry.amount_cents / 100.0 AS amount, 'EUR' AS currency,
+                    counterparty.name AS payee, category.name AS category,
+                    account.name AS account, entry.account_id, entry.category_id,
+                    entry.counterparty_id AS payee_id
+                FROM entry
+                JOIN effective_category AS category ON category.id = entry.category_id
+                JOIN effective_account AS account ON account.id = entry.account_id
+                LEFT JOIN counterparty ON counterparty.id = entry.counterparty_id
+                WHERE entry.kind = 'expense' AND entry.trashed_on IS NULL
+                    AND category.counts_as_spending = 1;
+            ALTER TABLE account DROP COLUMN currency;
+            ALTER TABLE account DROP COLUMN can_migrate_currency;
+            DELETE FROM grdb_migrations WHERE identifier = 'v4_account_currency';
+            """)
+    }
+    return file
 }

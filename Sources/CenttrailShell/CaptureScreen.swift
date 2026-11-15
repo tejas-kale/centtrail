@@ -351,7 +351,7 @@ struct TransactionRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(formatEuro(transaction.amount.value))
+            Text(formatAmount(transaction.amount.value, currency: transaction.account.currency))
                 .foregroundStyle(transaction.kind == .income ? .green : .primary)
                 .monospacedDigit()
         }
@@ -369,7 +369,11 @@ private func civilDate(_ date: Date, calendar: Calendar) -> ReportingDate? {
 }
 
 func formatEuro(_ cents: Int) -> String {
-    (Decimal(cents) / 100).formatted(.currency(code: "EUR"))
+    formatAmount(cents, currency: .eur)
+}
+
+func formatAmount(_ minorUnits: Int, currency: Currency) -> String {
+    (Decimal(minorUnits) / 100).formatted(.currency(code: currency.rawValue))
 }
 
 func formatSignedEuro(_ cents: Int) -> String {
