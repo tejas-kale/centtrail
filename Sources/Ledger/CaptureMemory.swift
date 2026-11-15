@@ -80,6 +80,18 @@ extension Ledger {
         return DraftCompletion(draft: draft, missingFields: missing)
     }
 
+    /// Saves a completed draft as a full entry when every field is filled, or
+    /// to the review inbox when only the category is missing.
+    public func record(_ completion: DraftCompletion) throws -> Transaction {
+        if completion.missingFields.isEmpty {
+            return try record(completion.draft)
+        }
+        if completion.missingFields == [.category], completion.draft.kind != .transfer {
+            return try recordForReview(completion.draft)
+        }
+        throw RecordEntryError.incomplete(completion.missingFields)
+    }
+
     private func trimmedNonEmpty(_ value: String?) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
             return nil
