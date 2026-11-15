@@ -107,3 +107,44 @@ private func withAnalysisLedger(_ body: (Ledger, Ledger) throws -> Void) throws 
         ])
     }
 }
+
+@Test func budgetsViewExposesEachBudgetWithCurrentMonthSpendingInItsCurrency() throws {
+    try withAnalysisLedger { writer, reader in
+        let india = try #require(try writer.accounts().first { $0.name == "India" })
+        try writer.setAccountCurrency(id: india.id, to: .inr)
+
+        let supermarket = try namedCategory(writer, "Supermarket")
+        let restaurant = try namedCategory(writer, "Restaurant")
+        try writer.setBudget(categoryID: supermarket.id, amount: Cents(40_000), currency: .eur)
+        try writer.setBudget(categoryID: restaurant.id, amount: Cents(100_000), currency: .inr)
+
+        let now = Date()
+        let calendar = Calendar(identifier: .gregorian)
+        let components = calendar.dateComponents([.year, .month], from: now)
+        let thisMonthDate = String(format: "%04d-%02d-01", components.year!, components.month!)
+        let prevYear = components.month! == 1 ? components.year! - 1 : components.year!
+        let prevMonth = components.month! == 1 ? 12 : components.month! - 1
+        let previousMonthDate = String(format: "%04d-%02d-15", prevYear, prevMonth)
+
+        _ = try recordEntry(writer, cents: 12_500, kind: .expense, payee: "Lidl", date: thisMonthDate, category: "Supermarket")
+        _ = try recordEntry(writer, cents: 9_000, kind: .expense, payee: "Lidl", date: previousMonthDate, category: "Supermarket")
+        // Other currency must not count toward Supermarket's EUR budget.
+        _ = try writer.record(EntryDraft(
+            amount: Cents(50_000),
+            kind: .expense,
+            payee: "BigBasket",
+            reportingDate: ReportingDate(iso8601: thisMonthDate)!,
+            categoryID: supermarket.id,
+            accountID: india.id
+        ))
+
+        let rows = try reader.query(
+            sql: "SELECT category, currency, budget_cents, budget_amount, spent_cents, spent_amount, fraction FROM budgets ORDER BY category"
+        ).rows
+        #expect(rows == [
+            [.text("Restaurant"), .text("INR"), .integer(100_000), .real(1000.0), .integer(0), .real(0.0), .real(0.0)],
+            [.text("Supermarket"), .text("EUR"), .integer(40_000), .real(400.0), .integer(12_500), .real(125.0), .real(0.3125)],
+        ])
+        #expect(try reader.describeSchema().contains("view budgets:"))
+    }
+}

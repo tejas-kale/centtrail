@@ -82,6 +82,16 @@ struct ImportRowRecord: Identifiable, Sendable {
     var sourceAccount: String = ""
 }
 
+@Table("budget")
+struct BudgetRecord: Identifiable, Sendable {
+    let id: UUID
+    @Column("category_id")
+    var categoryID: UUID
+    var currency: String = "EUR"
+    @Column("amount_cents")
+    var amountCents: Int = 0
+}
+
 private final class DatabaseBox: @unchecked Sendable {
     let db: Database
     init(_ db: Database) { self.db = db }
@@ -309,6 +319,34 @@ final class SQLiteConnection {
                         AND category.counts_as_spending = 1;
                 """)
         }
+        migrator.registerMigration("v4_category_budgets") { db in
+            try db.execute(sql: """
+                CREATE TABLE budget (
+                    id TEXT PRIMARY KEY NOT NULL ON CONFLICT REPLACE DEFAULT (uuid()),
+                    category_id TEXT NOT NULL REFERENCES category(id) ON DELETE CASCADE,
+                    currency TEXT NOT NULL DEFAULT 'EUR',
+                    amount_cents INTEGER NOT NULL DEFAULT 0
+                ) STRICT;
+                CREATE VIEW budgets AS
+                    SELECT budget.id, budget.category_id, category.name AS category,
+                        budget.currency,
+                        budget.amount_cents AS budget_cents,
+                        budget.amount_cents / 100.0 AS budget_amount,
+                        COALESCE(SUM(spending.amount_cents), 0) AS spent_cents,
+                        COALESCE(SUM(spending.amount_cents), 0) / 100.0 AS spent_amount,
+                        CASE WHEN budget.amount_cents > 0
+                            THEN COALESCE(SUM(spending.amount_cents), 0) * 1.0 / budget.amount_cents
+                            ELSE 0.0
+                        END AS fraction
+                    FROM budget
+                    JOIN effective_category AS category ON category.id = budget.category_id
+                    LEFT JOIN spending ON spending.category_id = budget.category_id
+                        AND spending.currency = budget.currency
+                        AND substr(spending.reporting_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')
+                    WHERE category.is_removed = 0 AND category.counts_as_spending = 1
+                    GROUP BY budget.id;
+                """)
+        }
         try migrator.migrate(database)
 
         switch syncMode {
@@ -332,6 +370,7 @@ final class SQLiteConnection {
             EntryRecord.self,
             PayeeAliasRecord.self,
             ImportRowRecord.self,
+            BudgetRecord.self,
             containerIdentifier: containerIdentifier
         )
     }
@@ -435,7 +474,7 @@ public final class LedgerObservation {
 }
 
 extension SQLiteConnection {
-    static let ledgerTables = ["reference_customization", "account", "category", "counterparty", "entry", "counterparty_alias", "import_row"]
+    static let ledgerTables = ["reference_customization", "account", "category", "counterparty", "entry", "counterparty_alias", "import_row", "budget"]
 
     func observeChanges(_ onChange: @escaping @Sendable () -> Void) -> LedgerObservation {
         let regions = Self.ledgerTables.map { GRDB.Table($0) as any DatabaseRegionConvertible }

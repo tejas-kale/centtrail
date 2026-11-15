@@ -24,6 +24,7 @@ final class CaptureModel: ObservableObject {
     @Published var destinationAccountID: Account.ID?
     @Published var accounts: [Account] = []
     @Published var categories: [LedgerCategory] = []
+    @Published var budgets: [CategoryBudget] = []
     @Published var payees: [Payee] = []
     @Published private var frequentPayeesByKind: [Kind: [FrequentPayee]] = [:]
 
@@ -290,6 +291,7 @@ final class CaptureModel: ObservableObject {
         try ledger.purgeExpiredTrash(today: today)
         accounts = try ledger.accounts()
         categories = try ledger.categories()
+        budgets = try ledger.budgets()
         payees = try ledger.payees()
         frequentPayeesByKind = [
             .expense: try ledger.frequentPayees(kind: .expense),

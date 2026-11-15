@@ -172,7 +172,8 @@ extension Ledger {
             currentMonthRange: range,
             spendingByCurrency: totals,
             recentEntries: Array(try transactions().prefix(5)),
-            reviewCount: try reviewInboxCount()
+            reviewCount: try reviewInboxCount(),
+            budgetGauges: try budgetGauges(in: range)
         )
     }
 

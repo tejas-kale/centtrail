@@ -74,6 +74,11 @@ import Testing
     try ledger.trash(aliased.id, on: today)
     #expect(try ledger.transactions().map(\.id) == [recorded.id])
     #expect(try ledger.runReport(.currentMonthSpending, today: today) == .spendingTotal(SignedCents(2450)))
+
+    _ = try ledger.setBudget(categoryID: restaurant.id, amount: Cents(10_000), currency: .eur)
+    #expect(try ledger.monthSummary(on: today).budgetGauges.count == 1)
+    try ledger.removeBudget(categoryID: restaurant.id)
+    #expect(try ledger.monthSummary(on: today).budgetGauges.isEmpty)
 }
 
 @Test func aliasUniquenessIsEnforcedInAppLogic() throws {
