@@ -163,7 +163,7 @@ final class CaptureModel: ObservableObject {
         }
     }
 
-    static func openDefault() throws -> CaptureModel {
+    nonisolated static func openDefaultLedger() throws -> (ledger: Ledger, today: ReportingDate) {
         let support = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -180,6 +180,11 @@ final class CaptureModel: ObservableObject {
         guard let today = civilDate(Date(), calendar: .current) else {
             throw CalendarDateError()
         }
+        return (ledger, today)
+    }
+
+    static func openDefault() throws -> CaptureModel {
+        let (ledger, today) = try openDefaultLedger()
         return try CaptureModel(ledger: ledger, today: today)
     }
 

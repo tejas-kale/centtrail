@@ -75,4 +75,66 @@ struct SystemEntryPointsTests {
         #expect(model.shouldStartListening == false)
         #expect(model.consumeStartListening() == false)
     }
+
+    @Test func recordEntryIntentNeverOpensAppAndIsRegisteredInAppShortcuts() {
+        #expect(RecordEntryIntent.openAppWhenRun == false)
+        #expect(CenttrailShortcuts.appShortcuts.count >= 2)
+    }
+
+    @Test func recordEntryIntentSavesKnownPayeeAndConfirmsDetails() async throws {
+        let ledger = try Ledger.openInMemory()
+        let accounts = try ledger.accounts()
+        let supermarket = try #require(try ledger.categories().first { $0.name == "Supermarket" })
+        let nov01 = try #require(ReportingDate(iso8601: "2026-11-01"))
+        let today = try #require(ReportingDate(iso8601: "2026-11-15"))
+        _ = try ledger.record(EntryDraft(
+            amount: Cents(500),
+            kind: .expense,
+            payee: "Lidl",
+            reportingDate: nov01,
+            categoryID: supermarket.id,
+            accountID: accounts[0].id
+        ))
+
+        let dialog = try await RecordEntryIntent.record("12.50 Lidl", in: ledger, today: today)
+
+        let transactions = try ledger.transactions()
+        #expect(transactions.count == 2)
+        let saved = transactions[0]
+        #expect(saved.needsReview == false)
+        #expect(saved.amount == Cents(1250))
+        #expect(saved.payee?.name == "Lidl")
+        #expect(saved.category == supermarket)
+        #expect(dialog.contains("€") || dialog.contains("EUR"))
+        #expect(dialog.contains("12"))
+        #expect(dialog.contains("Lidl"))
+        #expect(dialog.contains("Supermarket"))
+    }
+
+    @Test func recordEntryIntentSavesNewPayeeToReviewAndSaysToReview() async throws {
+        let ledger = try Ledger.openInMemory()
+        let today = try #require(ReportingDate(iso8601: "2026-11-15"))
+
+        let dialog = try await RecordEntryIntent.record("7.50 Bakery", in: ledger, today: today)
+
+        let inbox = try ledger.reviewInbox()
+        #expect(inbox.count == 1)
+        #expect(inbox[0].amount == Cents(750))
+        #expect(inbox[0].payee?.name == "Bakery")
+        #expect(dialog.contains("€") || dialog.contains("EUR"))
+        #expect(dialog.contains("7"))
+        #expect(dialog.contains("Bakery"))
+        #expect(dialog.contains("to review"))
+    }
+
+    @Test func recordEntryIntentWithUnparseableAmountSavesNothingAndSaysSo() async throws {
+        let ledger = try Ledger.openInMemory()
+        let today = try #require(ReportingDate(iso8601: "2026-11-15"))
+
+        let dialog = try await RecordEntryIntent.record("coffee at Lidl", in: ledger, today: today)
+
+        #expect(try ledger.transactions().isEmpty)
+        #expect(try ledger.reviewInbox().isEmpty)
+        #expect(dialog.contains("Nothing was saved"))
+    }
 }

@@ -135,3 +135,83 @@ import Testing
 
     #expect(completion.missingFields == [.amount, .payee, .reportingDate, .category, .account])
 }
+
+@Test func recordCompletedDraftSavesCompleteEntryWhenNoFieldsAreMissing() throws {
+    let ledger = try Ledger.openInMemory()
+    let accounts = try ledger.accounts()
+    let supermarket = try namedCategory(ledger, "Supermarket")
+    _ = try ledger.record(EntryDraft(
+        amount: Cents(900),
+        kind: .expense,
+        payee: "Lidl",
+        reportingDate: ReportingDate(iso8601: "2026-11-01"),
+        categoryID: supermarket.id,
+        accountID: accounts[1].id
+    ))
+    let today = try #require(ReportingDate(iso8601: "2026-11-15"))
+
+    let completion = try ledger.completeDraft(
+        amount: Cents(1250),
+        payeeText: "lidl",
+        date: nil,
+        defaults: EntryDraft(kind: .expense, reportingDate: today)
+    )
+    let saved = try ledger.record(completion)
+
+    #expect(saved.needsReview == false)
+    #expect(saved.amount == Cents(1250))
+    #expect(saved.payee?.name == "Lidl")
+    #expect(saved.category == supermarket)
+    #expect(saved.account == accounts[1])
+    #expect(try ledger.reviewInbox().isEmpty)
+}
+
+@Test func recordCompletedDraftSavesForReviewWhenOnlyCategoryIsMissing() throws {
+    let ledger = try Ledger.openInMemory()
+    let accounts = try ledger.accounts()
+    let today = try #require(ReportingDate(iso8601: "2026-11-15"))
+
+    let completion = try ledger.completeDraft(
+        amount: Cents(750),
+        payeeText: "Bakery",
+        date: nil,
+        defaults: EntryDraft(kind: .expense, reportingDate: today, accountID: accounts[0].id)
+    )
+    let saved = try ledger.record(completion)
+
+    #expect(saved.needsReview == true)
+    #expect(saved.amount == Cents(750))
+    #expect(saved.payee?.name == "Bakery")
+    #expect(saved.category == (try ledger.uncategorisedCategory()))
+    #expect(saved.account == accounts[0])
+    #expect(try ledger.reviewInbox().map(\.id) == [saved.id])
+}
+
+@Test func recordCompletedDraftRefusesAndSavesNothingWhenAmountOrPayeeIsMissing() throws {
+    let ledger = try Ledger.openInMemory()
+    let accounts = try ledger.accounts()
+    let today = try #require(ReportingDate(iso8601: "2026-11-15"))
+
+    let missingAmount = try ledger.completeDraft(
+        amount: nil,
+        payeeText: "Lidl",
+        date: nil,
+        defaults: EntryDraft(kind: .expense, reportingDate: today, accountID: accounts[0].id)
+    )
+    #expect(throws: RecordEntryError.incomplete([.amount, .category])) {
+        _ = try ledger.record(missingAmount)
+    }
+
+    let missingPayee = try ledger.completeDraft(
+        amount: Cents(1250),
+        payeeText: nil,
+        date: nil,
+        defaults: EntryDraft(kind: .expense, reportingDate: today, accountID: accounts[0].id)
+    )
+    #expect(throws: RecordEntryError.incomplete([.payee, .category])) {
+        _ = try ledger.record(missingPayee)
+    }
+
+    #expect(try ledger.transactions().isEmpty)
+    #expect(try ledger.reviewInbox().isEmpty)
+}
