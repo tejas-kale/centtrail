@@ -18,52 +18,35 @@ struct BudgetsScreen: View {
 
     var body: some View {
         List {
-            if let message {
-                Text(message)
-                    .foregroundStyle(.red)
-            }
-            ForEach(spendingCategories) { category in
-                let existing = budgetsByCategory[category.id]
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(category.name)
-                        if let existing {
-                            Text(formatAmount(existing.amount.value, currency: existing.currency))
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer()
-                    Button(existing == nil ? "Set" : "Edit") {
-                        editingCategory = category
-                        if let existing {
-                            amountText = String(format: "%.2f", Double(existing.amount.value) / 100.0)
-                            currency = existing.currency
-                        } else {
-                            amountText = ""
-                            currency = .eur
-                        }
-                        message = nil
-                    }
-                    .buttonStyle(.borderless)
-                    if existing != nil {
-                        Button("Remove", role: .destructive) {
-                            removeBudget(for: category)
-                        }
-                        .buttonStyle(.borderless)
-                    }
+            if let message, editingCategory == nil {
+                Section {
+                    ErrorBanner(message: message) { self.message = nil }
                 }
+                .ayuRows()
             }
+            Section {
+                ForEach(spendingCategories) { category in
+                    BudgetRow(
+                        category: category,
+                        budget: budgetsByCategory[category.id],
+                        edit: { edit(category) },
+                        remove: { removeBudget(for: category) }
+                    )
+                }
+            } footer: {
+                Text("Home shows a gauge for each category with a monthly budget.")
+            }
+            .ayuRows()
         }
+        .ayuGroupedBackground()
         .navigationTitle("Budgets")
         .sheet(item: $editingCategory) { category in
-            NavigationStack {
-                Form {
-                    if let message {
-                        Text(message)
-                            .foregroundStyle(.red)
-                    }
-                    TextField("Monthly budget", text: $amountText)
+            EditorSheet(title: category.name, canSave: !amountText.isBlank) {
+                saveBudget(for: category)
+            } content: {
+                Section {
+                    TextField("Monthly budget", text: $amountText, prompt: Text("0.00"))
+                        .monospacedDigit()
                         #if os(iOS)
                         .keyboardType(.decimalPad)
                         #endif
@@ -72,18 +55,28 @@ struct BudgetsScreen: View {
                             Text(option.rawValue).tag(option)
                         }
                     }
+                } header: {
+                    Text("Monthly budget")
                 }
-                .navigationTitle(category.name)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { editingCategory = nil }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") { saveBudget(for: category) }
-                    }
+                .ayuRows()
+                if let message {
+                    Section { ErrorBanner(message: message) }
+                        .ayuRows()
                 }
             }
         }
+    }
+
+    private func edit(_ category: LedgerCategory) {
+        if let existing = budgetsByCategory[category.id] {
+            amountText = String(format: "%.2f", Double(existing.amount.value) / 100.0)
+            currency = existing.currency
+        } else {
+            amountText = ""
+            currency = .eur
+        }
+        message = nil
+        editingCategory = category
     }
 
     private func saveBudget(for category: LedgerCategory) {
@@ -108,6 +101,47 @@ struct BudgetsScreen: View {
             message = nil
         } catch {
             message = error.localizedDescription
+        }
+    }
+}
+
+private struct BudgetRow: View {
+    let category: LedgerCategory
+    let budget: CategoryBudget?
+    let edit: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        Button(action: edit) {
+            HStack {
+                Text(category.name)
+                Spacer()
+                if let budget {
+                    Text(formatAmount(budget.amount.value, currency: budget.currency))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Not set")
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(budget == nil ? "Sets a monthly budget" : "Edits the monthly budget")
+        .swipeActions {
+            if budget != nil {
+                Button(action: remove) {
+                    Label("Remove budget", systemImage: "trash")
+                }
+                .tint(AyuStyle(role: .error))
+            }
+        }
+        .contextMenu {
+            Button(budget == nil ? "Set budget" : "Edit budget", systemImage: "pencil", action: edit)
+            if budget != nil {
+                Button("Remove budget", systemImage: "trash", role: .destructive, action: remove)
+            }
         }
     }
 }

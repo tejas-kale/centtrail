@@ -13,40 +13,36 @@ struct HomeScreen: View {
             List {
                 if let errorMessage = model.errorMessage {
                     Section {
-                        HStack {
-                            Text(errorMessage)
-                                .foregroundStyle(.red)
-                            Spacer()
-                            Button("Dismiss") {
-                                model.errorMessage = nil
-                            }
-                            .buttonStyle(.borderless)
-                        }
+                        ErrorBanner(message: errorMessage) { model.errorMessage = nil }
                     }
+                    .ayuRows()
                 }
 
                 if let summary = model.monthSummary {
                     Section {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(monthTitle(model.today))
-                                .font(.subheadline)
+                                .font(.subheadline.weight(.medium))
                                 .foregroundStyle(.secondary)
                             let totals = Currency.allCases.compactMap { currency in
                                 summary.spendingByCurrency[currency].map { (currency: currency, amount: $0) }
                             }
                             if totals.isEmpty {
                                 Text("No spending this month")
+                                    .font(.title3)
                                     .foregroundStyle(.secondary)
                             } else {
                                 ForEach(totals, id: \.currency) { item in
                                     Text(formatAmount(item.amount, currency: item.currency))
-                                        .font(.largeTitle.bold())
+                                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
                                         .monospacedDigit()
                                 }
                             }
                         }
-                        .padding(.vertical, 4)
+                        .padding(.vertical, 6)
+                        .accessibilityElement(children: .combine)
                     }
+                    .ayuRows()
 
                     if summary.reviewCount > 0 {
                         Section {
@@ -56,6 +52,7 @@ struct HomeScreen: View {
                                 Label("\(summary.reviewCount) to review", systemImage: "tray.full")
                             }
                         }
+                        .ayuRows()
                     }
 
                     if !summary.budgetGauges.isEmpty {
@@ -64,6 +61,7 @@ struct HomeScreen: View {
                                 BudgetGaugeRow(gauge: gauge)
                             }
                         }
+                        .ayuRows()
                     }
                 }
 
@@ -76,20 +74,18 @@ struct HomeScreen: View {
                             NavigationLink {
                                 TransactionDetail(model: model, transaction: transaction)
                             } label: {
-                                TransactionRow(transaction: transaction)
+                                TransactionRow(transaction: transaction, today: model.today)
                             }
-                            .swipeActions {
-                                Button("Trash", role: .destructive) {
-                                    model.trash(transaction)
-                                }
-                            }
+                            .transactionActions(model: model, transaction: transaction)
                         }
                         NavigationLink("See all") {
                             AllTransactionsScreen(model: model)
                         }
                     }
                 }
+                .ayuRows()
             }
+            .ayuGroupedBackground()
             .navigationTitle("Home")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -97,9 +93,36 @@ struct HomeScreen: View {
                         model.openAddSheet()
                     } label: {
                         Label("Add transaction", systemImage: "plus")
+                            .foregroundStyle(.ayuOnAccent)
                     }
+                    .buttonStyle(.glassProminent)
+                    .tint(AyuStyle(role: .accent))
+                    .keyboardShortcut("n", modifiers: .command)
                 }
             }
+        }
+    }
+}
+
+extension View {
+    /// Swipe and context-menu actions for a transaction row: edit and move to trash.
+    func transactionActions(model: CaptureModel, transaction: LedgerTransaction) -> some View {
+        swipeActions {
+            Button(role: .destructive) {
+                model.trash(transaction)
+            } label: {
+                Label("Move to Trash", systemImage: "trash")
+            }
+            .tint(AyuStyle(role: .error))
+            Button {
+                model.openEditSheet(transaction)
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+        }
+        .contextMenu {
+            Button("Edit", systemImage: "pencil") { model.openEditSheet(transaction) }
+            Button("Move to Trash", systemImage: "trash", role: .destructive) { model.trash(transaction) }
         }
     }
 }
@@ -107,11 +130,11 @@ struct HomeScreen: View {
 private struct BudgetGaugeRow: View {
     let gauge: BudgetGauge
 
-    private var tintColor: Color {
+    private var tintColor: AyuStyle {
         switch gauge.status {
-        case .normal: .accentColor
-        case .warning: .orange
-        case .exceeded: .red
+        case .normal: AyuStyle(role: .tint)
+        case .warning: AyuStyle(role: .warning)
+        case .exceeded: AyuStyle(role: .error)
         }
     }
 
@@ -122,7 +145,7 @@ private struct BudgetGaugeRow: View {
                 Spacer()
                 Text("\(formatAmount(gauge.spent.value, currency: gauge.currency)) / \(formatAmount(gauge.budget.value, currency: gauge.currency))")
                     .font(.footnote)
-                    .foregroundStyle(gauge.status == .normal ? .secondary : tintColor)
+                    .foregroundStyle(gauge.status == .normal ? AnyShapeStyle(.secondary) : AnyShapeStyle(tintColor))
                     .monospacedDigit()
             }
             ProgressView(value: min(gauge.fraction, 1.0))
@@ -148,18 +171,17 @@ struct ReviewInboxScreen: View {
                     Button {
                         model.openEditSheet(transaction)
                     } label: {
-                        TransactionRow(transaction: transaction)
+                        TransactionRow(transaction: transaction, today: model.today)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .swipeActions {
-                        Button("Trash", role: .destructive) {
-                            model.trash(transaction)
-                        }
-                    }
+                    .accessibilityHint("Opens the entry to review")
+                    .transactionActions(model: model, transaction: transaction)
                 }
+                .ayuRows()
             }
         }
+        .ayuGroupedBackground()
         .navigationTitle("To review")
     }
 }
@@ -183,9 +205,9 @@ struct AllTransactionsScreen: View {
         List {
             if let errorMessage = model.errorMessage {
                 Section {
-                    Text(errorMessage)
-                        .foregroundStyle(.red)
+                    ErrorBanner(message: errorMessage) { model.errorMessage = nil }
                 }
+                .ayuRows()
             }
 
             if filteredTransactions.isEmpty {
@@ -197,20 +219,18 @@ struct AllTransactionsScreen: View {
                             NavigationLink {
                                 TransactionDetail(model: model, transaction: transaction)
                             } label: {
-                                TransactionRow(transaction: transaction, showsDate: false)
+                                TransactionRow(transaction: transaction, today: model.today, showsDate: false)
                             }
-                            .swipeActions {
-                                Button("Trash", role: .destructive) {
-                                    model.trash(transaction)
-                                }
-                            }
+                            .transactionActions(model: model, transaction: transaction)
                         }
                     } header: {
                         Text(dayLabel(day.date, today: model.today))
                     }
+                    .ayuRows()
                 }
             }
         }
+        .ayuGroupedBackground()
         .navigationTitle("All transactions")
         .searchable(text: $searchText, prompt: "Search payee, category, or note")
     }
@@ -410,29 +430,25 @@ struct AddEntrySheet: View {
 
                     if let message = model.draftMessage {
                         Text(message)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.ayuError)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityLabel("Entry needs attention: \(message)")
                     }
 
-                    Button {
+                    Button("Save") {
                         if model.save() { dismiss() }
-                    } label: {
-                        Text("Save")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 36)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.ayuProminent)
                     .disabled(voice.isRecording || voice.isPreparing || model.isInterpretingSpeech)
                     .keyboardShortcut(.defaultAction)
                 }
                 .padding(24)
                 .frame(maxWidth: 560)
-                .background(.background, in: RoundedRectangle(cornerRadius: 28))
+                .background(.ayuRow, in: RoundedRectangle(cornerRadius: 28))
                 .padding()
                 .frame(maxWidth: .infinity)
             }
-            .background(Color.secondary.opacity(0.08))
+            .background(.ayuBackground)
             .disabled(model.isInterpretingSpeech)
             .navigationTitle(model.editingEntryID == nil ? "New transaction" : "Edit transaction")
             #if os(iOS)
@@ -557,7 +573,7 @@ struct AddEntrySheet: View {
                     Button("Done") {
                         voice.finish()
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.ayuProminent)
                     .buttonBorderShape(.capsule)
                 }
             }
@@ -617,9 +633,9 @@ struct TransactionDetail: View {
         Form {
             if let errorMessage = model.errorMessage {
                 Section {
-                    Text(errorMessage)
-                        .foregroundStyle(.red)
+                    ErrorBanner(message: errorMessage) { model.errorMessage = nil }
                 }
+                .ayuRows()
             }
 
             Section {
@@ -638,7 +654,7 @@ struct TransactionDetail: View {
                 } else {
                     LabeledContent("Amount") {
                         Text(formatAmount(transaction.amount.value, currency: transaction.account.currency))
-                            .foregroundStyle(transaction.kind == .income ? .green : .primary)
+                            .foregroundStyle(transaction.kind == .income ? AnyShapeStyle(.ayuPositive) : AnyShapeStyle(.ayuText))
                             .monospacedDigit()
                     }
                 }
@@ -647,28 +663,44 @@ struct TransactionDetail: View {
                 LabeledContent("Account", value: transaction.account.name)
                 if let destination = transaction.destinationAccount { LabeledContent("To account", value: destination.name) }
                 if let category = transaction.category { LabeledContent("Category", value: category.name) }
-                LabeledContent("Reporting date", value: transaction.reportingDate.iso8601)
+                LabeledContent("Date", value: dayLabel(transaction.reportingDate, today: model.today))
                 if let note = transaction.note, !note.isEmpty {
                     LabeledContent("Note", value: note)
                 }
             }
+            .ayuRows()
 
             Section {
-                Button("Move to Trash", role: .destructive) {
+                Button(role: .destructive) {
                     model.trash(transaction)
                     if model.errorMessage == nil {
                         dismiss()
                     }
+                } label: {
+                    Label("Move to Trash", systemImage: "trash")
+                        .foregroundStyle(.ayuError)
                 }
             }
+            .ayuRows()
         }
+        .ayuGroupedBackground()
         .navigationTitle(transaction.payee?.name ?? "Transfer")
-        .toolbar { Button("Edit") { model.openEditSheet(transaction) } }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    model.openEditSheet(transaction)
+                } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+                .keyboardShortcut("e", modifiers: .command)
+            }
+        }
     }
 }
 
 struct SettingsScreen: View {
     @ObservedObject var model: CaptureModel
+    @AppStorage(AyuDarkChoice.storageKey) private var darkChoice: AyuDarkChoice = .default
 
     var body: some View {
         NavigationStack {
@@ -695,6 +727,7 @@ struct SettingsScreen: View {
                         Label("Payees", systemImage: "person.2")
                     }
                 }
+                .ayuRows()
                 Section("Data") {
                     NavigationLink {
                         ImportScreen(model: model)
@@ -707,119 +740,24 @@ struct SettingsScreen: View {
                         Label("Recently deleted", systemImage: "trash")
                     }
                 }
-            }
-            .navigationTitle("Settings")
-        }
-    }
-}
-
-struct CategoriesScreen: View {
-    @ObservedObject var model: CaptureModel
-    @State private var newName = ""
-    @State private var renamingCategory: LedgerCategory?
-    @State private var renameText = ""
-    @State private var message: String?
-
-    var body: some View {
-        Form {
-            if let message {
+                .ayuRows()
                 Section {
-                    Text(message)
-                        .foregroundStyle(.red)
-                }
-            }
-            Section("Add category") {
-                TextField("Category name", text: $newName)
-                Button("Add category", action: addCategory)
-            }
-            Section("Categories") {
-                ForEach(model.categories) { category in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(category.name)
-                            if !category.countsAsSpending {
-                                Text("Excluded from spending")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
+                    Picker(selection: $darkChoice) {
+                        ForEach(AyuDarkChoice.allCases) { choice in
+                            Text(choice.title).tag(choice)
                         }
-                        Spacer()
-                        Button("Rename") {
-                            renameText = category.name
-                            renamingCategory = category
-                        }
-                        .buttonStyle(.borderless)
-                        Button("Remove", role: .destructive) {
-                            removeCategory(category)
-                        }
-                        .buttonStyle(.borderless)
+                    } label: {
+                        Label("Dark Mode theme", systemImage: "moon")
                     }
+                } header: {
+                    Text("Appearance")
+                } footer: {
+                    Text("Centtrail uses Ayu Light in Light Mode and your choice of Ayu Mirage or Ayu Dark in Dark Mode.")
                 }
+                .ayuRows()
             }
-        }
-        .navigationTitle("Categories")
-        .sheet(item: $renamingCategory) { category in
-            NavigationStack {
-                Form {
-                    TextField("Category name", text: $renameText)
-                }
-                .navigationTitle("Rename \(category.name)")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") {
-                            renamingCategory = nil
-                        }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
-                            saveRename(category)
-                        }
-                    }
-                }
-            }
-        }
-        .onAppear(perform: reload)
-    }
-
-    private func addCategory() {
-        do {
-            _ = try model.ledger.addCategory(name: newName, countsAsSpending: true)
-            newName = ""
-            message = nil
-            try model.reload()
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func saveRename(_ category: LedgerCategory) {
-        do {
-            _ = try model.ledger.renameCategory(id: category.id, to: renameText)
-            renamingCategory = nil
-            message = nil
-            try model.reload()
-        } catch {
-            renamingCategory = nil
-            message = error.localizedDescription
-        }
-    }
-
-    private func removeCategory(_ category: LedgerCategory) {
-        do {
-            try model.ledger.removeCategory(id: category.id)
-            message = nil
-            try model.reload()
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func reload() {
-        do {
-            try model.reload()
-            message = nil
-        } catch {
-            message = error.localizedDescription
+            .ayuGroupedBackground()
+            .navigationTitle("Settings")
         }
     }
 }
@@ -835,11 +773,11 @@ struct PayeesScreen: View {
         Form {
             if let message {
                 Section {
-                    Text(message)
-                        .foregroundStyle(.red)
+                    ErrorBanner(message: message) { self.message = nil }
                 }
+                .ayuRows()
             }
-            Section("Payees") {
+            Section {
                 if payees.isEmpty {
                     Text("No payees yet.")
                         .foregroundStyle(.secondary)
@@ -853,7 +791,12 @@ struct PayeesScreen: View {
                         }
                     }
                 }
+            } header: {
+                Text("Default category")
+            } footer: {
+                Text("New entries for a payee start with its default category.")
             }
+            .ayuRows()
             if payees.count >= 2 {
                 Section("Merge payees") {
                     Picker("Merge", selection: $mergeSource) {
@@ -868,11 +811,13 @@ struct PayeesScreen: View {
                             Text(payee.name).tag(Optional(payee.id))
                         }
                     }
-                    Button("Merge payees", action: merge)
+                    Button("Merge payees", systemImage: "arrow.triangle.merge", action: merge)
                         .disabled(mergeSource == nil || mergeTarget == nil || mergeSource == mergeTarget)
                 }
+                .ayuRows()
             }
         }
+        .ayuGroupedBackground()
         .navigationTitle("Payees")
         .onAppear(perform: reload)
     }
@@ -930,9 +875,9 @@ struct TrashScreen: View {
         List {
             if let message {
                 Section {
-                    Text(message)
-                        .foregroundStyle(.red)
+                    ErrorBanner(message: message) { self.message = nil }
                 }
+                .ayuRows()
             }
             if entries.isEmpty {
                 ContentUnavailableView(
@@ -941,36 +886,56 @@ struct TrashScreen: View {
                     description: Text("Deleted transactions stay here for 30 days before automatic removal.")
                 )
             } else {
-                ForEach(entries) { entry in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.transaction.payee?.name ?? "Transfer")
-                            Text("\(entry.transaction.category?.name ?? "Transfer") · \(entry.transaction.reportingDate.iso8601)")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                            Text("\(entry.daysRemaining) \(entry.daysRemaining == 1 ? "day" : "days") remaining")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text(formatAmount(entry.transaction.amount.value, currency: entry.transaction.account.currency))
-                            .monospacedDigit()
-                        Button("Restore") {
-                            do {
-                                try model.ledger.restore(entry.id)
-                                message = nil
-                                reload()
-                            } catch {
-                                message = error.localizedDescription
+                Section {
+                    ForEach(entries) { entry in
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.transaction.payee?.name ?? "Transfer")
+                                Text("\(entry.transaction.category?.name ?? "Transfer") · \(shortDayLabel(entry.transaction.reportingDate, today: model.today))")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Text("\(entry.daysRemaining) \(entry.daysRemaining == 1 ? "day" : "days") left")
+                                    .font(.footnote)
+                                    .foregroundStyle(.tertiary)
                             }
+                            Spacer(minLength: 8)
+                            Text(formatAmount(entry.transaction.amount.value, currency: entry.transaction.account.currency))
+                                .monospacedDigit()
+                            Button { restore(entry) } label: {
+                                Image(systemName: "arrow.uturn.backward.circle")
+                                    .font(.title2)
+                                    .frame(minWidth: 44, minHeight: 44)
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Restore \(entry.transaction.payee?.name ?? "transfer")")
                         }
-                        .buttonStyle(.bordered)
+                        .swipeActions(edge: .leading) {
+                            Button { restore(entry) } label: {
+                                Label("Restore", systemImage: "arrow.uturn.backward")
+                            }
+                            .tint(AyuStyle(role: .accent))
+                        }
+                        .contextMenu {
+                            Button("Restore", systemImage: "arrow.uturn.backward") { restore(entry) }
+                        }
                     }
                 }
+                .ayuRows()
             }
         }
+        .ayuGroupedBackground()
         .navigationTitle("Recently deleted")
         .onAppear(perform: reload)
+    }
+
+    private func restore(_ entry: TrashedEntry) {
+        do {
+            try model.ledger.restore(entry.id)
+            message = nil
+            reload()
+        } catch {
+            message = error.localizedDescription
+        }
     }
 
     private func reload() {

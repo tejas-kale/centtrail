@@ -39,12 +39,13 @@ struct ImportScreen: View {
             Section {
                 Button("Choose CSV file", systemImage: "doc") { isChoosingFile = true }
                 if let filename { Text(filename).foregroundStyle(.secondary) }
-                if let message { Text(message).foregroundStyle(isError ? .red : .secondary) }
+                if let message { Text(message).foregroundStyle(isError ? AnyShapeStyle(.ayuError) : AnyShapeStyle(.secondary)) }
             }
+            .ayuRows()
             if filename != nil && !rows.isEmpty {
                 Section {
                     LabeledContent("Transactions to import", value: String(readyCount + keptUncertainCount))
-                    Button("Import transactions", action: commit)
+                    Button("Import transactions", systemImage: "square.and.arrow.down", action: commit)
                         .disabled(unresolvedMatches || !hasRowsToImport)
                 } footer: {
                     if unresolvedMatches {
@@ -53,6 +54,7 @@ struct ImportScreen: View {
                         Text("Payees remember their category automatically for future entries.")
                     }
                 }
+                .ayuRows()
                 if !uncertainRows.isEmpty {
                     Section {
                         ForEach(uncertainRows) { row in
@@ -74,6 +76,7 @@ struct ImportScreen: View {
                     } footer: {
                         Text("These look like transactions already in your ledger.")
                     }
+                    .ayuRows()
                 }
                 if !definiteRepeatRows.isEmpty {
                     Section {
@@ -81,6 +84,7 @@ struct ImportScreen: View {
                             ForEach(definiteRepeatRows) { rowSummary($0) }
                         }
                     }
+                    .ayuRows()
                 }
                 if !correctionRows.isEmpty {
                     Section {
@@ -88,21 +92,24 @@ struct ImportScreen: View {
                             ForEach(correctionRows) { row in
                                 VStack(alignment: .leading, spacing: 4) {
                                     rowSummary(row)
-                                    Text(stateLabel(row.state)).font(.footnote).foregroundStyle(.red)
+                                    Text(stateLabel(row.state)).font(.footnote).foregroundStyle(.ayuError)
                                 }
                             }
                         }
                     }
+                    .ayuRows()
                 }
                 Section {
                     TextField("Reporting date column", text: $dateColumn)
                         .onSubmit { preview() }
-                    Button("Update preview", action: preview)
+                    Button("Update preview", systemImage: "arrow.clockwise", action: preview)
                 } header: {
                     Text("Options")
                 }
+                .ayuRows()
             }
         }
+        .ayuGroupedBackground()
         .navigationTitle("Import CSV")
         .fileImporter(isPresented: $isChoosingFile, allowedContentTypes: [.commaSeparatedText, .plainText]) { result in
             load(result)

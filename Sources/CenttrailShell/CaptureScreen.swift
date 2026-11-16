@@ -357,8 +357,10 @@ private struct AppTabShell: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
+        .ayuTheme()
         .sheet(isPresented: $model.isPresentingAddSheet) {
             AddEntrySheet(model: model)
+                .ayuTheme()
         }
     }
 }
@@ -379,21 +381,32 @@ private final class LedgerLoader: ObservableObject {
 
 struct TransactionRow: View {
     let transaction: LedgerTransaction
+    let today: ReportingDate
     var showsDate = true
 
+    private var subtitle: String {
+        var parts = [transaction.account.name + (transaction.destinationAccount.map { " → \($0.name)" } ?? "")]
+        if let category = transaction.category, transaction.kind != .transfer { parts.append(category.name) }
+        if showsDate { parts.append(shortDayLabel(transaction.reportingDate, today: today)) }
+        return parts.joined(separator: " · ")
+    }
+
     var body: some View {
-        HStack {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(transaction.payee?.name ?? "Transfer")
-                Text("\(transaction.account.name)\(transaction.destinationAccount.map { " → \($0.name)" } ?? "")\(showsDate ? " · \(transaction.reportingDate.iso8601)" : "")")
+                    .lineLimit(1)
+                Text(subtitle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: 8)
             Text(amountLabel)
-                .foregroundStyle(transaction.kind == .income ? .green : .primary)
+                .foregroundStyle(transaction.kind == .income ? AnyShapeStyle(.ayuPositive) : AnyShapeStyle(.ayuText))
                 .monospacedDigit()
         }
+        .accessibilityElement(children: .combine)
     }
 
     private var amountLabel: String {

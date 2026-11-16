@@ -1,7 +1,9 @@
+import Foundation
 import Ledger
 
 /// What the add/edit account sheet holds until the owner taps Save.
-struct AccountDraft {
+struct AccountDraft: Identifiable {
+    let id = UUID()
     let original: Account?
     var name: String
     var currency: Currency
@@ -38,7 +40,8 @@ struct AccountDraft {
 
 /// What the add/edit category sheet holds until the owner taps Save.
 /// The ledger fixes whether a category counts as spending when it is added.
-struct CategoryDraft {
+struct CategoryDraft: Identifiable {
+    let id = UUID()
     let original: LedgerCategory?
     var name: String
     var countsAsSpending: Bool
