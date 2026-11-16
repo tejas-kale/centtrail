@@ -50,13 +50,43 @@ public final class Ledger {
         try Ledger(path: file.path(percentEncoded: false), syncMode: .disabled, readOnly: true)
     }
 
-    init(path: String?, syncMode: SyncMode, readOnly: Bool = false) throws {
+    init(path: String?, syncMode: SyncMode, readOnly: Bool = false, runsSyncRepairs: Bool = true) throws {
         connection = try SQLiteConnection(path: path, syncMode: syncMode, readOnly: readOnly)
         if !readOnly {
             try seedCategories()
             try seedAccounts()
+            if runsSyncRepairs, connection.syncEngine != nil {
+                try requeueAllRowsOnce()
+            }
         }
     }
+
+    /// Ledgers synced before the CloudKit Production schema was deployed have
+    /// rows whose upload was rejected but which SQLiteData treats as sent, so
+    /// it never retries them. Children of a missing category then fail with
+    /// `referenceViolation`, and SQLiteData applies the foreign key action
+    /// locally: budgets are deleted and payee defaults cleared. Touching every
+    /// synced row, parents first, queues it for upload again; rows already on
+    /// the server merge through `serverRecordChanged`. Runs once per ledger.
+    private func requeueAllRowsOnce() throws {
+        let repair = "2026-11-requeue-all-rows"
+        try connection.inTransaction {
+            let done = try connection.query(
+                "SELECT 1 FROM local_sync_repair WHERE name = ?",
+                bindings: [.text(repair)]
+            )
+            guard done.isEmpty else { return }
+            for table in Self.syncedTablesParentsFirst {
+                try connection.execute("UPDATE \(table) SET id = id")
+            }
+            try connection.execute("INSERT INTO local_sync_repair (name) VALUES (?)", bindings: [.text(repair)])
+        }
+    }
+
+    static let syncedTablesParentsFirst = [
+        "account", "category", "reference_customization", "counterparty",
+        "counterparty_alias", "entry", "import_row", "budget",
+    ]
 
     /// Calls `onChange` after every committed change to the ledger, whether made
     /// on this device or pulled in by iCloud sync. Keep the returned observation

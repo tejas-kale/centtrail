@@ -373,6 +373,10 @@ final class SQLiteConnection {
                     WHERE entry.kind = 'transfer' AND entry.trashed_on IS NULL;
                 """)
         }
+        migrator.registerMigration("v5_local_sync_repairs") { db in
+            // Local bookkeeping only: never registered with the SyncEngine.
+            try db.execute(sql: "CREATE TABLE local_sync_repair (name TEXT PRIMARY KEY NOT NULL) STRICT")
+        }
         try migrator.migrate(database)
 
         switch syncMode {
