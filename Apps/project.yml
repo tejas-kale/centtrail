@@ -28,6 +28,8 @@ targets:
   CenttrailIOS:
     type: application
     platform: iOS
+    # Shared scheme, so regenerating keeps it for xcodebuild archive.
+    scheme: {}
     sources:
       - iOS
       - Assets.xcassets
@@ -63,6 +65,8 @@ targets:
   CenttrailMac:
     type: application
     platform: macOS
+    # Shared scheme, so regenerating keeps it for xcodebuild archive.
+    scheme: {}
     sources:
       # Shared with the package's CenttrailMac executable target.
       - ../Sources/CenttrailMac
