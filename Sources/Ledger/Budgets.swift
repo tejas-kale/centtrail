@@ -79,6 +79,32 @@ extension Ledger {
         )
     }
 
+    /// This month's entries that make up `gauge.spent`, newest first: expenses in the gauge's
+    /// category and currency from the first of the month through `today`.
+    public func budgetEntries(for gauge: BudgetGauge, on today: ReportingDate) throws -> [Transaction] {
+        let start = ReportingDate(year: today.year, month: today.month, day: 1)!
+        let rows = try connection.query(
+            """
+            \(entrySelectSQL)
+            WHERE entry.trashed_on IS NULL
+              AND entry.kind = 'expense'
+              AND entry_category.counts_as_spending = 1
+              AND entry.category_id = ?
+              AND account.currency = ?
+              AND entry.reporting_date >= ?
+              AND entry.reporting_date <= ?
+            ORDER BY entry.reporting_date DESC, entry.rowid DESC
+            """,
+            bindings: [
+                .text(stored(gauge.category.id.rawValue)),
+                .text(gauge.currency.rawValue),
+                .text(start.iso8601),
+                .text(today.iso8601),
+            ]
+        )
+        return try rows.map(decodeTransaction)
+    }
+
     func budgetGauges(in range: DateRange) throws -> [BudgetGauge] {
         let activeBudgets = try budgets()
         guard !activeBudgets.isEmpty else { return [] }

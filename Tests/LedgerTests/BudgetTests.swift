@@ -151,3 +151,49 @@ import Testing
     let reopened = try Ledger.open(at: url, sync: sync)
     #expect(try reopened.budgets() == [saved])
 }
+
+@Test func budgetGaugeReportsRemainingOrOverAmountAndWholePercentUsed() {
+    let category = Category(id: Category.ID(rawValue: UUID()), name: "Restaurant", countsAsSpending: true)
+
+    let under = BudgetGauge(category: category, currency: .eur, budget: Cents(10_000), spent: Cents(8_049))
+    #expect(under.remaining == Cents(1_951))
+    #expect(under.overBudget == Cents(0))
+    #expect(under.percentUsed == 80)
+
+    let over = BudgetGauge(category: category, currency: .inr, budget: Cents(100_000), spent: Cents(120_000))
+    #expect(over.remaining == Cents(0))
+    #expect(over.overBudget == Cents(20_000))
+    #expect(over.percentUsed == 120)
+
+    let untouched = BudgetGauge(category: category, currency: .eur, budget: Cents(10_000), spent: Cents(0))
+    #expect(untouched.remaining == Cents(10_000))
+    #expect(untouched.overBudget == Cents(0))
+    #expect(untouched.percentUsed == 0)
+}
+
+@Test func budgetEntriesListsOnlyThisMonthsSpendingThatCountsTowardTheGauge() throws {
+    let ledger = try Ledger.openInMemory()
+    let india = try #require(try ledger.accounts().first { $0.name == "India" })
+    try ledger.setAccountCurrency(id: india.id, to: .inr)
+    let supermarket = try namedCategory(ledger, "Supermarket")
+    try ledger.setBudget(categoryID: supermarket.id, amount: Cents(40_000), currency: .eur)
+    let nov10 = try #require(ReportingDate(iso8601: "2026-11-10"))
+
+    _ = try recordEntry(ledger, cents: 30_000, kind: .expense, payee: "Lidl", date: "2026-10-31", category: "Supermarket")
+    let first = try recordEntry(ledger, cents: 2_000, kind: .expense, payee: "Lidl", date: "2026-11-02", category: "Supermarket")
+    let second = try recordEntry(ledger, cents: 3_000, kind: .expense, payee: "Aldi", date: "2026-11-09", category: "Supermarket")
+    _ = try ledger.record(EntryDraft(
+        amount: Cents(50_000), kind: .expense, payee: "BigBasket", reportingDate: nov10,
+        categoryID: supermarket.id, accountID: india.id
+    ))
+    _ = try recordEntry(ledger, cents: 5_000, kind: .income, payee: "Lidl", date: "2026-11-06", category: "Supermarket")
+    let trashed = try recordEntry(ledger, cents: 15_000, kind: .expense, payee: "Mistake", date: "2026-11-07", category: "Supermarket")
+    try ledger.trash(trashed.id, on: nov10)
+    _ = try recordEntry(ledger, cents: 2_500, kind: .expense, payee: "Bistro", date: "2026-11-08", category: "Restaurant")
+
+    let gauge = try #require(try ledger.monthSummary(on: nov10).budgetGauges.first)
+    let entries = try ledger.budgetEntries(for: gauge, on: nov10)
+
+    #expect(entries.map(\.id) == [second.id, first.id])
+    #expect(entries.reduce(0) { $0 + $1.amount.value } == gauge.spent.value)
+}

@@ -444,6 +444,17 @@ public struct BudgetGauge: Hashable, Sendable, Identifiable {
         return .normal
     }
 
+    /// Budget left this month; zero once spending reaches the budget.
+    public var remaining: Cents { Cents(max(budget.value - spent.value, 0)) }
+
+    /// Spending beyond the budget this month; zero while under budget.
+    public var overBudget: Cents { Cents(max(spent.value - budget.value, 0)) }
+
+    /// Share of the budget spent, as a whole percentage rounded down (80.49% -> 80).
+    public var percentUsed: Int {
+        budget.value > 0 ? spent.value * 100 / budget.value : 0
+    }
+
     public init(category: Category, currency: Currency, budget: Cents, spent: Cents) {
         self.category = category
         self.currency = currency

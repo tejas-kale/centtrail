@@ -6,6 +6,7 @@ import UIKit
 
 struct HomeScreen: View {
     @ObservedObject var model: CaptureModel
+    @State private var selectedGauge: BudgetGauge?
 
     private var recentTransactions: [LedgerTransaction] {
         model.monthSummary?.recentEntries ?? []
@@ -60,9 +61,7 @@ struct HomeScreen: View {
 
                     if !summary.budgetGauges.isEmpty {
                         Section("Budgets") {
-                            ForEach(summary.budgetGauges) { gauge in
-                                BudgetGaugeRow(gauge: gauge)
-                            }
+                            BudgetGaugeGrid(gauges: summary.budgetGauges) { selectedGauge = $0 }
                         }
                         .ayuRows()
                     }
@@ -90,6 +89,9 @@ struct HomeScreen: View {
             }
             .ayuGroupedBackground()
             .navigationTitle("Home")
+            .sheet(item: $selectedGauge) { gauge in
+                BudgetDetailSheet(model: model, gauge: gauge)
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
@@ -127,34 +129,6 @@ extension View {
             Button("Edit", systemImage: "pencil") { model.openEditSheet(transaction) }
             Button("Move to Trash", systemImage: "trash", role: .destructive) { model.trash(transaction) }
         }
-    }
-}
-
-private struct BudgetGaugeRow: View {
-    let gauge: BudgetGauge
-
-    private var tintColor: AyuStyle {
-        switch gauge.status {
-        case .normal: AyuStyle(role: .tint)
-        case .warning: AyuStyle(role: .warning)
-        case .exceeded: AyuStyle(role: .error)
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(gauge.category.name)
-                Spacer()
-                Text("\(formatAmount(gauge.spent.value, currency: gauge.currency)) / \(formatAmount(gauge.budget.value, currency: gauge.currency))")
-                    .font(.footnote)
-                    .foregroundStyle(gauge.status == .normal ? AnyShapeStyle(.secondary) : AnyShapeStyle(tintColor))
-                    .monospacedDigit()
-            }
-            ProgressView(value: min(gauge.fraction, 1.0))
-                .tint(tintColor)
-        }
-        .padding(.vertical, 2)
     }
 }
 
