@@ -139,7 +139,7 @@ final class CaptureModel: ObservableObject {
         do {
             if !categoryChosenManually {
                 applyingPrefill = true
-                categoryID = try ledger.defaultCategory(forPayeeName: payee)?.id
+                categoryID = try ledger.suggestedCategory(forPayeeName: payee)?.id
                 applyingPrefill = false
             }
             accountID = try ledger.lastUsedAccount(forPayeeName: payee)?.id
@@ -165,7 +165,8 @@ final class CaptureModel: ObservableObject {
     func selectFrequentPayee(_ suggestion: FrequentPayee) {
         categoryChosenManually = false
         payee = suggestion.payee.name
-        categoryID = suggestion.payee.defaultCategory?.id
+        categoryID = (try? ledger.suggestedCategory(forPayeeName: suggestion.payee.name))?.id
+            ?? suggestion.payee.defaultCategory?.id
         accountID = suggestion.lastUsedAccount.id
     }
 

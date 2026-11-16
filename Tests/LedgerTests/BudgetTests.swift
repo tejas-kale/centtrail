@@ -118,3 +118,36 @@ import Testing
     let december = try ledger.monthSummary(on: dec1)
     #expect(december.budgetGauges.allSatisfy { $0.spent == Cents(0) && $0.fraction == 0.0 && $0.status == .normal })
 }
+
+@Test func budgetSurvivesReopeningAFileBackedLedger() throws {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("centtrail-budget-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let saved = try {
+        let ledger = try Ledger.open(at: url, sync: .disabled)
+        return try ledger.setBudget(categoryID: try namedCategory(ledger, "Supermarket").id, amount: Cents(40_000), currency: .eur)
+    }()
+
+    let reopened = try Ledger.open(at: url, sync: .disabled)
+    #expect(try reopened.budgets() == [saved])
+}
+
+@Test func budgetSurvivesReopeningASyncedLedger() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("centtrail-budget-synced-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appendingPathComponent("ledger.sqlite")
+    let sync = Ledger.SyncMode.enabled(containerIdentifier: "iCloud.com.tejaskale.centtrail")
+
+    let saved = try {
+        let ledger = try Ledger.open(at: url, sync: sync)
+        let saved = try ledger.setBudget(categoryID: try namedCategory(ledger, "Supermarket").id, amount: Cents(40_000), currency: .eur)
+        #expect(try ledger.budgets() == [saved])
+        return saved
+    }()
+
+    let reopened = try Ledger.open(at: url, sync: sync)
+    #expect(try reopened.budgets() == [saved])
+}

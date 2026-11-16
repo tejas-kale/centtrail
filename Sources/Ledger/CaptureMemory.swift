@@ -36,8 +36,9 @@ extension Ledger {
             if let payeeID = try resolvePayeeID(named: incomingPayee) {
                 let payee = try requirePayee(id: payeeID)
                 resolvedPayeeName = payee.name
-                resolvedCategoryID = payee.defaultCategory?.id ?? (overridesCategory ? defaults.categoryID : nil)
-                if payee.defaultCategory != nil {
+                let suggested = try suggestedCategory(forPayeeName: incomingPayee)
+                resolvedCategoryID = suggested?.id ?? (overridesCategory ? defaults.categoryID : nil)
+                if suggested != nil {
                     overridesCategory = false
                 }
                 let mru = try mostRecentlyUsedAccount()?.id
@@ -97,6 +98,66 @@ extension Ledger {
             return nil
         }
         return trimmed
+    }
+
+    /// The category to pre-select when capture names a known payee: the
+    /// payee's default category, else the category of its newest active entry.
+    /// Every payee with that name or alias is considered, so a duplicate payee
+    /// or a default cleared by sync still yields the category already in use.
+    public func suggestedCategory(forPayeeName name: String) throws -> Category? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var payeeIDs: [String] = []
+        if let resolved = try resolvePayeeID(named: trimmed) {
+            payeeIDs.append(stored(resolved))
+        }
+        let matches = try connection.query(
+            """
+            SELECT id FROM counterparty WHERE name = ? COLLATE NOCASE
+            UNION
+            SELECT counterparty_id FROM counterparty_alias WHERE name = ? COLLATE NOCASE
+            """,
+            bindings: [.text(trimmed), .text(trimmed)]
+        )
+        for id in matches.compactMap({ $0.first?.text }) where !payeeIDs.contains(id) {
+            payeeIDs.append(id)
+        }
+        guard !payeeIDs.isEmpty else { return nil }
+
+        let uncategorised = stored(OwnerCategories.uncategorisedID)
+        for payeeID in payeeIDs {
+            let rows = try connection.query(
+                """
+                SELECT category.id, category.name, category.counts_as_spending
+                FROM counterparty
+                JOIN effective_category AS category ON category.id = counterparty.default_category_id
+                WHERE counterparty.id = ? AND category.is_removed = 0 AND category.id != ?
+                """,
+                bindings: [.text(payeeID), .text(uncategorised)]
+            )
+            if let row = rows.first {
+                return try category(idText: row[0].text, name: row[1].text, spending: row[2].integer)
+            }
+        }
+
+        let placeholders = Array(repeating: "?", count: payeeIDs.count).joined(separator: ", ")
+        let lastUsed = try connection.query(
+            """
+            SELECT category.id, category.name, category.counts_as_spending
+            FROM entry
+            JOIN effective_category AS category ON category.id = entry.category_id
+            WHERE entry.counterparty_id IN (\(placeholders))
+              AND entry.trashed_on IS NULL
+              AND entry.kind != 'transfer'
+              AND category.is_removed = 0
+              AND category.id != ?
+            ORDER BY entry.reporting_date DESC, entry.rowid DESC
+            LIMIT 1
+            """,
+            bindings: payeeIDs.map { .text($0) } + [.text(uncategorised)]
+        )
+        guard let row = lastUsed.first else { return nil }
+        return try category(idText: row[0].text, name: row[1].text, spending: row[2].integer)
     }
 
     /// The newest active entry by reporting date, then recording order, supplies
