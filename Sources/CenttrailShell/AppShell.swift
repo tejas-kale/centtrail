@@ -1,5 +1,8 @@
 import Ledger
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct HomeScreen: View {
     @ObservedObject var model: CaptureModel
@@ -528,22 +531,63 @@ struct AddEntrySheet: View {
         .accessibilityLabel(model.kind == .transfer ? "Source account" : "Account")
         .accessibilityValue(model.accounts.first { $0.id == model.accountID }?.name ?? "Choose account")
 
-        Button { isChoosingDate = true } label: {
+        Button {
+            isAmountFocused = false
+            dismissKeyboard()
+            isChoosingDate = true
+        } label: {
             Label(model.selectedDate.formatted(.dateTime.month(.abbreviated).day()), systemImage: "calendar")
         }
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
         .accessibilityLabel("Date")
         .accessibilityValue(model.selectedDate.formatted(date: .complete, time: .omitted))
-        .popover(isPresented: $isChoosingDate) {
-            VStack {
-                DatePicker("Date", selection: $model.selectedDate, displayedComponents: .date)
-                    .datePickerStyle(.graphical)
-                Button("Done") { isChoosingDate = false }
+        #if os(iOS)
+        // A sheet, not a compact-forced popover: a popover on iPhone collapses the
+        // graphical calendar to the chip's width (build 9 bug).
+        .sheet(isPresented: $isChoosingDate) {
+            NavigationStack {
+                ScrollView { datePickerCalendar }
+                    .navigationTitle("Date")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { isChoosingDate = false }
+                        }
+                    }
             }
-            .padding()
-            .presentationCompactAdaptation(.popover)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
+        #else
+        .popover(isPresented: $isChoosingDate) {
+            datePickerCalendar
+                .frame(minWidth: 320)
+        }
+        #endif
+    }
+
+    private var datePickerCalendar: some View {
+        DatePicker(
+            "Date",
+            selection: Binding(
+                get: { model.selectedDate },
+                set: { date in
+                    model.selectedDate = date
+                    isChoosingDate = false
+                }
+            ),
+            displayedComponents: .date
+        )
+        .datePickerStyle(.graphical)
+        .labelsHidden()
+        .padding()
+    }
+
+    private func dismissKeyboard() {
+        #if canImport(UIKit)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        #endif
     }
 
     private var listeningOverlay: some View {
