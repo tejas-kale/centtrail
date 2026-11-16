@@ -36,10 +36,15 @@ extension Ledger {
             if let payeeID = try resolvePayeeID(named: incomingPayee) {
                 let payee = try requirePayee(id: payeeID)
                 resolvedPayeeName = payee.name
-                let suggested = try suggestedCategory(forPayeeName: incomingPayee)
-                resolvedCategoryID = suggested?.id ?? (overridesCategory ? defaults.categoryID : nil)
-                if suggested != nil {
+                // A payee default wins as before; an explicit override wins
+                // over a category only inferred from history.
+                if let defaultCategory = payee.defaultCategory {
+                    resolvedCategoryID = defaultCategory.id
                     overridesCategory = false
+                } else if overridesCategory {
+                    resolvedCategoryID = defaults.categoryID
+                } else {
+                    resolvedCategoryID = try suggestedCategory(forPayeeName: incomingPayee)?.id
                 }
                 let mru = try mostRecentlyUsedAccount()?.id
                 resolvedAccountID = try lastUsedAccount(forPayeeName: payee.name)?.id

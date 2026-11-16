@@ -68,3 +68,22 @@ private func clearDefaultCategory(_ ledger: Ledger, payee name: String) throws {
     #expect(try ledger.suggestedCategory(forPayeeName: "Edeka") == nil)
     #expect(try ledger.suggestedCategory(forPayeeName: "") == nil)
 }
+
+@Test func explicitCategoryOverrideSurvivesDraftCompletionForAPayeeWithoutADefault() throws {
+    let ledger = try Ledger.openInMemory()
+    _ = try recordEntry(ledger, cents: 2_450, kind: .expense, payee: "REWE", date: "2026-11-02", category: "Supermarket")
+    try clearDefaultCategory(ledger, payee: "REWE")
+    let restaurant = try namedCategory(ledger, "Restaurant")
+
+    let completion = try ledger.completeDraft(
+        amount: Cents(900),
+        payeeText: "Rewe",
+        date: ReportingDate(iso8601: "2026-11-10"),
+        defaults: EntryDraft(categoryID: restaurant.id, overridesCategory: true)
+    )
+    #expect(completion.draft.categoryID == restaurant.id)
+    #expect(completion.draft.overridesCategory)
+
+    let suggested = try ledger.completeDraft(amount: Cents(900), payeeText: "Rewe", date: ReportingDate(iso8601: "2026-11-10"))
+    #expect(suggested.draft.categoryID == (try namedCategory(ledger, "Supermarket")).id)
+}
