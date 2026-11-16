@@ -237,6 +237,20 @@ func dayLabel(_ date: ReportingDate, today: ReportingDate) -> String {
     return value.formatted(style)
 }
 
+/// A compact row date such as "2 Nov", with the year only when it is not this year.
+func shortDayLabel(_ date: ReportingDate, today: ReportingDate, locale: Locale = .current) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    guard let value = calendar.date(from: DateComponents(year: date.year, month: date.month, day: date.day)) else {
+        return date.iso8601
+    }
+    var style = Date.FormatStyle(date: .omitted, time: .omitted).day().month(.abbreviated)
+    if date.year != today.year { style = style.year() }
+    style.timeZone = calendar.timeZone
+    style.locale = locale
+    return value.formatted(style)
+}
+
 struct AddEntrySheet: View {
     @ObservedObject var model: CaptureModel
     @Environment(\.dismiss) private var dismiss
