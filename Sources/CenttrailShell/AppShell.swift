@@ -355,30 +355,12 @@ struct AddEntrySheet: View {
                                     .buttonStyle(.plain)
                                 }
                             }
-                            if model.payee.isEmpty && !model.frequentPayees.isEmpty {
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 8) {
-                                        ForEach(model.frequentPayees) { suggestion in
-                                            Button(suggestion.payee.name) {
-                                                model.selectFrequentPayee(suggestion)
-                                                isAmountFocused = true
-                                            }
-                                            .buttonStyle(.bordered)
-                                            .buttonBorderShape(.capsule)
-                                            .accessibilityHint("Fills payee, category and account")
-                                        }
-                                    }
-                                }
-                                .accessibilityLabel("Frequent payees")
-                            }
                         }
                     }
 
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) { metadataChips }
-                        VStack(alignment: .leading, spacing: 12) { metadataChips }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Always one row: the category chip gives way first, then the account.
+                    HStack(spacing: 8) { metadataChips }
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                     if model.kind == .transfer {
                         Menu {
@@ -412,11 +394,9 @@ struct AddEntrySheet: View {
                             .accessibilityLabel("Entry needs attention: \(message)")
                     }
 
-                    Button("Save") {
-                        if model.save() { dismiss() }
-                    }
+                    Button("Save") { save() }
                     .buttonStyle(.ayuProminent)
-                    .disabled(voice.isRecording || voice.isPreparing || model.isInterpretingSpeech)
+                    .disabled(isSaveDisabled)
                     .keyboardShortcut(.defaultAction)
                 }
                 .padding(24)
@@ -433,7 +413,13 @@ struct AddEntrySheet: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel", systemImage: "xmark") { dismiss() }
+                        .labelStyle(.iconOnly)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", systemImage: "checkmark") { save() }
+                        .labelStyle(.iconOnly)
+                        .disabled(isSaveDisabled)
                 }
             }
             .onAppear {
@@ -486,9 +472,12 @@ struct AddEntrySheet: View {
                 }
             } label: {
                 Label(model.categories.first { $0.id == model.categoryID }?.name ?? "Category", systemImage: "tag")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             .buttonStyle(.bordered)
             .buttonBorderShape(.capsule)
+            .layoutPriority(0)
             .accessibilityLabel("Category")
             .accessibilityValue(model.categories.first { $0.id == model.categoryID }?.name ?? "Choose category")
         }
@@ -499,9 +488,12 @@ struct AddEntrySheet: View {
             }
         } label: {
             Label(model.accounts.first { $0.id == model.accountID }?.name ?? "Account", systemImage: "creditcard")
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
+        .layoutPriority(1)
         .accessibilityLabel(model.kind == .transfer ? "Source account" : "Account")
         .accessibilityValue(model.accounts.first { $0.id == model.accountID }?.name ?? "Choose account")
 
@@ -511,9 +503,12 @@ struct AddEntrySheet: View {
             isChoosingDate = true
         } label: {
             Label(model.selectedDate.formatted(.dateTime.month(.abbreviated).day()), systemImage: "calendar")
+                .lineLimit(1)
+                .fixedSize()
         }
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
+        .layoutPriority(2)
         .accessibilityLabel("Date")
         .accessibilityValue(model.selectedDate.formatted(date: .complete, time: .omitted))
         #if os(iOS)
@@ -602,6 +597,16 @@ struct AddEntrySheet: View {
             .padding(24)
         }
     }
+}
+
+extension AddEntrySheet {
+    private var isSaveDisabled: Bool {
+        voice.isRecording || voice.isPreparing || model.isInterpretingSpeech
+    }
+
+    private func save() {
+        if model.save() { dismiss() }
+    }
 
     private var microphoneButton: some View {
         Button {
@@ -613,11 +618,13 @@ struct AddEntrySheet: View {
             }
         } label: {
             Image(systemName: voice.isRecording ? "stop.circle.fill" : "mic")
-                .font(.title3)
+                .font(.body)
+                .foregroundStyle(voice.isRecording ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                // Small glyph, full 44 pt hit area.
                 .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.circle)
+        .buttonStyle(.plain)
         .disabled(voice.isPreparing || model.isInterpretingSpeech)
         .accessibilityLabel(voice.isRecording ? "Stop listening" : "Fill from speech")
         .accessibilityHint("Fills the card from on-device speech. Review the fields and tap Save.")
